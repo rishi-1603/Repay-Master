@@ -1,0 +1,1 @@
+streamlit run c:/Users/Nirmal/OneDrive/Desktop/temp/main/app.py
