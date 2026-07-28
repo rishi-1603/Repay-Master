@@ -1,9 +1,1 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-@layer base {
-  body {
-    @apply bg-light text-dark font-sans;
-  }
-}
+@import "tailwindcss";

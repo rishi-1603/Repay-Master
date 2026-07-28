@@ -16,3 +16,4 @@ pandas
 numpy
 joblib
 fpdf2
+email-validator
