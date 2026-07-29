@@ -44,6 +44,11 @@ export const createLoan = async (loan) => {
   return response.data;
 };
 
+export const getLoanAnalytics = async (loanId) => {
+  const response = await api.get(`/loans/${loanId}/analytics`);
+  return response.data;
+};
+
 export const chatWithAI = async (message, context = null) => {
   const response = await api.post('/ai/chat', { message, context });
   return response.data;

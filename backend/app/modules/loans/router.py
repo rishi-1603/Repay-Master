@@ -15,14 +15,21 @@ def create_loan_for_user(
     current_user: User = Depends(get_current_user)
 ):
     emi = service.calculate_emi(loan_in.principal, loan_in.annual_interest_rate, loan_in.tenure_months)
-    risk = service.predict_risk(loan_in.principal, emi)
+    risk_data = service.predict_risk(loan_in.principal, emi, loan_in.monthly_income)
     
-    db_loan = crud.create_loan(db=db, loan=loan_in, user_id=current_user.id, emi=emi, risk=risk)
+    db_loan = crud.create_loan(db=db, loan=loan_in, user_id=current_user.id, emi=emi, risk=risk_data["label"])
     
     due_date = (datetime.utcnow() + timedelta(days=30)).strftime("%Y-%m-%d")
     service.send_emi_reminder_email(current_user.email, emi, due_date)
     
     return db_loan
+
+@router.get("/{loan_id}/analytics")
+def get_loan_analytics(loan_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    loan = db.query(crud.Loan).filter(crud.Loan.id == loan_id, crud.Loan.owner_id == current_user.id).first()
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    return service.get_analytics(loan.principal, loan.annual_interest_rate, loan.tenure_months, loan.monthly_income, loan.monthly_expenses)
 
 @router.get("/compare")
 def compare_loan_banks(principal: float, tenure_months: int, current_user: User = Depends(get_current_user)):

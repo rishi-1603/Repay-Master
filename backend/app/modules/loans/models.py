@@ -9,6 +9,8 @@ class Loan(Base):
     principal = Column(Float)
     annual_interest_rate = Column(Float)
     tenure_months = Column(Integer)
+    monthly_income = Column(Float, nullable=True, default=50000)
+    monthly_expenses = Column(Float, nullable=True, default=20000)
     monthly_emi = Column(Float, nullable=True)
     risk_category = Column(String, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"))

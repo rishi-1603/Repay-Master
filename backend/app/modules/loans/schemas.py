@@ -6,6 +6,8 @@ class LoanBase(BaseModel):
     principal: float
     annual_interest_rate: float
     tenure_months: int
+    monthly_income: Optional[float] = 50000
+    monthly_expenses: Optional[float] = 20000
 
 class LoanCreate(LoanBase):
     pass
