@@ -5,3 +5,6 @@ joblib
 plotly
 google-generativeai
 scikit-learn
+requests
+shap
+fpdf2

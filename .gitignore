@@ -1,9 +1,0 @@
-__pycache__/
-*.py[cod]
-.streamlit/secrets.toml
-.venv/
-venv/
-*.egg-info/
-.pytest_cache/
-.DS_Store
-*.pkl

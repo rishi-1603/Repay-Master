@@ -1,158 +1,86 @@
-# 🏦 RepayMaster AI — Enterprise Loan Intelligence Platform
+# 🏦 RepayMaster — Loan Repayment Timeline Predictor
 
-RepayMaster AI is a full-stack, enterprise-grade Fintech SaaS product that solves complex loan repayment challenges for both customers and banks using AI-powered insights, predictive modeling, and clean architecture.
+RepayMaster is a Streamlit app that helps you plan how to repay a loan: it
+calculates EMIs across multiple tenures, visualizes the repayment timeline,
+assesses affordability risk with a machine-learning model, and can generate
+personalized repayment strategies with Gemini.
 
-## 🌟 Business Problem
+## Features
+- **EMI calculator** — enter loan amount, interest rate, and start date in USD
+  or INR, plus your monthly income/expenses.
+- **Live USD↔INR exchange rate** display (with an offline fallback estimate).
+- **Repayment comparison** — Short / Recommended / Long term options, with
+  EMI comparison chart, payment breakdown donut, and monthly cash-flow chart.
+- **ML Risk Assessment** — a `RandomForest` model predicts Low/Medium/High
+  affordability risk, with a SHAP-based (or feature-importance fallback)
+  explanation of the prediction. See [`MODEL_CARD.md`](MODEL_CARD.md).
+- **Financial health metrics** — debt-to-income ratio, total monthly burden,
+  savings potential.
+- **Loan Payment Achievements** — a gamified milestone timeline (10%, 25%,
+  50%, 90%, one year, five years, etc.) per repayment term.
+- **Amortization schedule** — full month-by-month table with CSV export.
+- **India-specific tips** — Section 24(b) / 80C tax deduction notes and
+  practical prepayment tips.
+- **Prepayment simulator** — see the interest/time saved from extra monthly
+  payments or a one-time lump sum.
+- **Compare multiple loan offers** side by side.
+- **Save scenarios to history** — optional local username/password login
+  (SQLite-backed) lets you save and revisit past scenarios; the calculator
+  works fully without an account too.
+- **AI-Powered Recommendations** — Gemini-generated repayment strategy advice.
+- **PDF report export** of the full analysis.
 
-**Customers struggle with:**
-- Choosing the right loan tenure and bank.
-- Understanding the true cost of early repayments.
-- Finding optimal strategies when interest rates change.
-- Navigating complex financial jargon.
+## Getting started
 
-**Banks struggle with:**
-- Predicting loan defaults and managing risk.
-- Educating customers at scale.
-- Recommending optimal loan products programmatically.
-
-**Our Solution:**
-RepayMaster AI solves this by offering a robust dashboard that calculates EMIs, visualizes repayment schedules, assesses financial health using a RandomForest risk model, and provides personalized strategies via a Gemini-powered **AI Financial Advisor**.
-
----
-
-## 🏗 Architecture
-
-The platform is built using a modern **Clean Architecture** pattern to ensure scalability, maintainability, and enterprise readiness.
-
-### High-Level Flow
-1. **Client Layer:** React + Vite + TailwindCSS for a highly responsive, dynamic UI.
-2. **API Layer:** FastAPI exposing RESTful endpoints, secured by JWT Authentication.
-3. **Service Layer:** Core business logic for EMI calculations, Risk predictions (`risk_model.pkl`), and AI Advisory (`google-genai`).
-4. **Data Layer:** PostgreSQL powered by SQLAlchemy ORM.
-
-### Tech Stack
-- **Frontend:** React, Vite, TailwindCSS, Recharts, Lucide-React
-- **Backend:** Python 3.10, FastAPI, Pydantic, Passlib, JWT
-- **Database:** PostgreSQL, SQLAlchemy, Alembic
-- **Machine Learning & AI:** Scikit-Learn, Google Gemini (Flash 2.5)
-- **DevOps:** Docker, Docker Compose, GitHub Actions (CI/CD), Pytest
-
----
-
-## 🗄 Entity-Relationship (ER) Diagram
-
-```mermaid
-erDiagram
-    USERS {
-        int id PK
-        string email UK
-        string hashed_password
-        string full_name
-        boolean is_active
-        datetime created_at
-    }
-    LOANS {
-        int id PK
-        string title
-        float principal
-        float annual_interest_rate
-        int tenure_months
-        float monthly_emi
-        string risk_category
-        int owner_id FK
-    }
-    USERS ||--o{ LOANS : owns
-```
-
----
-
-## 🚀 Features
-
-- **JWT Authentication:** Secure User Signup, Login, and protected routes.
-- **AI Financial Advisor:** Gemini-powered conversational AI for loan planning and what-if analysis.
-- **Machine Learning Risk Prediction:** Scikit-Learn RandomForest model predicting default risk (Low/Medium/High).
-- **Interactive Dashboards:** Recharts visualization for EMI forecasting and loan portfolios.
-- **Clean Architecture:** Well-structured backend separating API routes, services, CRUD, and models.
-- **Containerization:** Fully Dockerized architecture via `docker-compose`.
-- **CI/CD Pipeline:** Automated GitHub actions for linting and running Pytest test suites.
-
----
-
-## 📂 Folder Structure
-
-```text
-RepayMaster/
-├── backend/
-│   ├── app/                  # DDD Source Code
-│   │   ├── main.py
-│   │   ├── core/             # Auth, Config, Deps
-│   │   ├── db/               # Postgres Config
-│   │   └── modules/          # Feature Domains
-│   │       ├── ai/
-│   │       ├── loans/        
-│   │       ├── reports/      
-│   │       └── users/
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/
-│   ├── src/
-│   │   ├── components/       # Reusable UI Blocks (Layout, Loans, Charts)
-│   │   ├── pages/            # Login, Dashboard Container
-│   │   ├── services/         # API Layer
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   ├── package.json
-│   ├── tailwind.config.js
-│   └── Dockerfile
-├── docker-compose.yml
-├── .github/workflows/ci.yml
-└── README.md
-```
-
----
-
-## 📚 API Documentation
-
-FastAPI provides automatic, interactive documentation. Once the app is running, visit:
-- **Swagger UI:** `http://localhost:8000/docs`
-- **ReDoc:** `http://localhost:8000/redoc`
-
-**Key Endpoints:**
-- `POST /api/v1/auth/signup`: Create a new user account.
-- `POST /api/v1/auth/login`: Authenticate and receive a JWT.
-- `GET /api/v1/auth/me`: Get current user details.
-- `GET /api/v1/loans/`: Fetch all loans for the authenticated user.
-- `POST /api/v1/loans/`: Create a new loan (auto-calculates EMI & Risk).
-- `POST /api/v1/ai/chat`: Send a message to the AI Financial Advisor.
-
----
-
-## 🛳 Deployment
-
-### Run Locally with Docker
 ```bash
-git clone https://github.com/your-username/RepayMaster.git
-cd RepayMaster
-
-# Start PostgreSQL, Backend, and Frontend
-docker-compose up --build
+pip install -r requirements.txt
+streamlit run app.py
 ```
-- **Frontend:** http://localhost:4173
-- **Backend:** http://localhost:8000
-- **Database:** localhost:5432
 
-### Cloud Deployment (Render / AWS / Azure)
-1. Provision a managed **PostgreSQL** database.
-2. Deploy the `backend` Dockerfile as a Web Service. Set environment variables (`DATABASE_URL`, `GEMINI_API_KEY`).
-3. Deploy the `frontend` Dockerfile as a Static Site or Node service. Update the `VITE_API_URL` to point to the backend domain.
+The app opens at `http://localhost:8501`.
 
----
+### Enabling AI recommendations
+Create `.streamlit/secrets.toml` (gitignored) with:
 
-## 🔮 Future Scope
-- Real-time live bank interest rate API integrations.
-- Scheduled email reminders for upcoming EMI payments (Celery/Redis).
-- Export complete amortization schedules to PDF reports.
-- Advanced AI What-If Simulators directly integrated into charts.
+```toml
+GEMINI_API_KEY = "your-gemini-api-key"
+```
 
----
-**Developed for Enterprise scale. Built to win.**
+or set the `GEMINI_API_KEY` environment variable before launching. Without a
+key, every other feature still works — the AI section just shows a warning
+telling you how to enable it.
+
+### Retraining the risk model
+The pretrained model lives in `models/`. To retrain it from
+`data/synthesized_student_loan_data.csv`:
+
+```bash
+python train_model.py
+```
+
+## Project structure
+```
+Repay-Master/
+├── app.py                  # main Streamlit entry point
+├── requirements.txt
+├── README.md
+├── MODEL_CARD.md
+├── train_model.py          # one-off script that (re)builds models/*.joblib
+├── .streamlit/
+│   └── config.toml         # dark theme
+├── utils/
+│   ├── finance.py          # EMI, amortization, achievements, prepayment math
+│   ├── currency.py         # formatting + live FX rate
+│   ├── risk.py             # risk model load/predict/explain
+│   ├── auth.py             # local login + saved-scenario history (SQLite)
+│   └── pdf_report.py       # PDF report generation
+├── models/
+│   ├── risk_model.joblib
+│   ├── risk_scaler.joblib
+│   └── metrics.json
+└── data/
+    └── synthesized_student_loan_data.csv
+```
+
+No frontend, backend, Docker, or CI/CD — this is a single, self-contained
+Streamlit application.
