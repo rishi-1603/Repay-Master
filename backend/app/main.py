@@ -1,13 +1,22 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from sqlalchemy import text
 from app.db.database import engine, Base
 from app.modules.users import router as users_router
 from app.modules.loans import router as loans_router
 from app.modules.ai import router as ai_router
 from app.modules.reports import router as reports_router
-
 Base.metadata.create_all(bind=engine)
+
+# Auto-migrate new columns if they are missing
+try:
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE loans ADD COLUMN monthly_income FLOAT DEFAULT 50000;"))
+        conn.execute(text("ALTER TABLE loans ADD COLUMN monthly_expenses FLOAT DEFAULT 20000;"))
+        conn.commit()
+except Exception:
+    pass
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
