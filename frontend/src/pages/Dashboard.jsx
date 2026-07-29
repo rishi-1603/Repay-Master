@@ -10,6 +10,7 @@ import AiAdvisor from '../components/chat/AiAdvisor';
 
 export default function Dashboard({ setAuth }) {
   const [activeAnalytics, setActiveAnalytics] = useState(null);
+  const [activeForm, setActiveForm] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -27,6 +28,7 @@ export default function Dashboard({ setAuth }) {
       // Fetch detailed analytics for it
       const analytics = await getLoanAnalytics(newLoan.id);
       setActiveAnalytics(analytics);
+      setActiveForm(formData);
     } catch (err) {
       if (err.response?.status === 401) {
         handleLogout();
@@ -56,12 +58,12 @@ export default function Dashboard({ setAuth }) {
         {/* Dashboard Analytics (Only visible after a loan is created) */}
         {activeAnalytics && !isLoading && (
           <div className="animate-fade-in">
-            <Recommendations analytics={activeAnalytics} />
+            <Recommendations analytics={activeAnalytics} currency={activeForm?.currency} />
             <MLRiskAssessment analytics={activeAnalytics} />
             <FinancialOverview analytics={activeAnalytics} />
             
             <div className="mt-8">
-              <AiAdvisor loans={[]} /> 
+              <AiAdvisor loans={[{ ...activeForm, ...activeAnalytics }]} /> 
             </div>
           </div>
         )}
