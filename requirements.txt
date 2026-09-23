@@ -4,7 +4,7 @@ numpy
 joblib
 plotly
 google-generativeai
-scikit-learn
+scikit-learn==1.9.1
 requests
 shap
 fpdf2

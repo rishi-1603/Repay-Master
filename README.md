@@ -82,5 +82,36 @@ Repay-Master/
     └── synthesized_student_loan_data.csv
 ```
 
-No frontend, backend, Docker, or CI/CD — this is a single, self-contained
-Streamlit application.
+## Backend API (in progress)
+
+A FastAPI backend is being built under `backend/` that wraps the existing
+deterministic finance math (`utils/finance.py`) and the ML risk model
+(`utils/risk.py`) as independently callable, tested HTTP endpoints, so this
+logic is no longer only reachable from inside the Streamlit process.
+
+**Currently implemented and tested:**
+- `POST /loan/calculate` — EMI/repayment-option calculation (Short/Recommended/Long term)
+- `POST /loan/prepayment` — prepayment/lump-sum simulation
+- `POST /risk/predict` — RandomForest risk classification + SHAP-based explanation
+- `GET /health`
+
+Run it locally:
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8010
+```
+Then open `http://localhost:8010/docs` for interactive API docs.
+
+**Roadmap (not yet built — tracked honestly, not claimed as done):**
+- User auth + saved-scenario history exposed via the API (currently only in
+  the Streamlit app's local SQLite-backed `utils/auth.py`)
+- `POST /ai/explain` — Gemini-generated natural-language explanation of an
+  already-computed risk result (Gemini explains, it never calculates)
+- Kafka event publishing (`LoanCreated`, `RiskCalculated`) for downstream
+  analytics
+- Dockerfile + docker-compose + GitHub Actions CI
+- Airflow DAG for scheduled batch risk scoring
+
+The Streamlit app (`app.py`) is unchanged and still works standalone; it does
+not yet call this API internally.

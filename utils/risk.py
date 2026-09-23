@@ -1,10 +1,17 @@
-"""RandomForest affordability-risk model: load, predict, and explain."""
+"""RandomForest affordability-risk model: load, predict, and explain.
+
+This module is intentionally UI-framework-agnostic: it is imported both by
+the Streamlit app (`app.py`) and by the FastAPI backend (`backend/`), so it
+must not hard-depend on Streamlit. Model loading is cached with a plain
+`functools.lru_cache` (process-wide, works the same under Streamlit or
+Uvicorn) instead of `st.cache_resource`.
+"""
+import functools
 import os
 import json
 import joblib
 import numpy as np
 import pandas as pd
-import streamlit as st
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(BASE_DIR, "models", "risk_model.joblib")
@@ -14,8 +21,20 @@ METRICS_PATH = os.path.join(BASE_DIR, "models", "metrics.json")
 FEATURE_NAMES = ["loan_amount", "interest_rate", "monthly_income", "monthly_expenses", "monthly_payment"]
 
 
-@st.cache_resource(show_spinner=False)
+@functools.lru_cache(maxsize=1)
 def load_risk_model():
+    """Load the trained RandomForest + scaler once per process and cache them.
+
+    Raises FileNotFoundError with a clear message if `python train_model.py`
+    has never been run -- callers (both the Streamlit app and the FastAPI
+    `/predict` endpoint) are expected to catch this and return a friendly
+    "model not available" response rather than a raw 500.
+    """
+    if not os.path.exists(MODEL_PATH) or not os.path.exists(SCALER_PATH):
+        raise FileNotFoundError(
+            f"Risk model artifacts not found at {MODEL_PATH} / {SCALER_PATH}. "
+            "Run `python train_model.py` first."
+        )
     model = joblib.load(MODEL_PATH)
     scaler = joblib.load(SCALER_PATH)
     return model, scaler
