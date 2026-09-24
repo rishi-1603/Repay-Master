@@ -1,7 +1,7 @@
 """RepayMaster API configuration.
 
-Kept deliberately small on Day 1: only what /loan/calculate and /risk/predict
-need. Auth/history settings are added on Day 2 alongside those endpoints.
+Day 2: auth/history settings added alongside those endpoints (loan/risk
+calculation needed none of this on Day 1).
 """
 from functools import lru_cache
 
@@ -21,6 +21,17 @@ class Settings(BaseSettings):
 
     GEMINI_API_KEY: str | None = None
 
+    # JWT for /history: a REST API has no server-side session to lean on, so
+    # a short-lived signed bearer token issued at /auth/login is how
+    # subsequent requests prove who they are without re-hitting sqlite with
+    # a password on every call. This default is fine for local development
+    # only -- it is intentionally NOT a secure production value, and is
+    # flagged as such in .env.example and the README (same known gap as
+    # DevTrack's SECRET_KEY, tracked honestly rather than silently shipped).
+    SECRET_KEY: str = "dev-only-insecure-secret-change-in-production"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -28,3 +39,4 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+

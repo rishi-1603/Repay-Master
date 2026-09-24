@@ -1,18 +1,22 @@
 """RepayMaster FastAPI application entrypoint.
 
-Day 1 scope: this API exposes the same deterministic finance math and ML
-risk model that already existed inside the Streamlit app (`utils/finance.py`,
+Day 1: this API exposed the same deterministic finance math and ML risk
+model that already existed inside the Streamlit app (`utils/finance.py`,
 `utils/risk.py`), as real, independently callable, testable HTTP endpoints.
-The Streamlit app is unchanged today and keeps working standalone; converting
-it into a thin client of this API, plus auth/history/Kafka endpoints, is
-tracked as Day 2-4 work (see repo README "Roadmap" section) rather than
-pretended to be finished here.
+
+Day 2: added /auth (register/login, reusing utils/auth.py's existing
+sqlite3 + PBKDF2 user store) and /history (saved-scenario CRUD, scoped to
+the authenticated user). The Streamlit app is unchanged and keeps working
+standalone; converting it into a thin client of this API, plus a Gemini
+explain endpoint and Kafka event publishing, remains tracked as future work
+(see repo README "Roadmap" section) rather than pretended to be finished
+here.
 """
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import loans, risk
+from app.api import auth, history, loans, risk
 from app.core.config import settings
 
 app = FastAPI(
@@ -39,6 +43,8 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
 
 app.include_router(loans.router)
 app.include_router(risk.router)
+app.include_router(auth.router)
+app.include_router(history.router)
 
 
 @app.get("/", include_in_schema=False)

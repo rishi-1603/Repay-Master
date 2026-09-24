@@ -78,8 +78,14 @@ Repay-Master/
 │   ├── risk_model.joblib
 │   ├── risk_scaler.joblib
 │   └── metrics.json
-└── data/
-    └── synthesized_student_loan_data.csv
+├── data/
+│   └── synthesized_student_loan_data.csv
+└── backend/                # FastAPI backend, see "Backend API" below
+    └── app/
+        ├── api/             # loans, risk, auth, history routers
+        ├── core/            # config, JWT security
+        ├── schemas/         # Pydantic request/response models
+        └── tests/
 ```
 
 ## Backend API (in progress)
@@ -93,7 +99,24 @@ logic is no longer only reachable from inside the Streamlit process.
 - `POST /loan/calculate` — EMI/repayment-option calculation (Short/Recommended/Long term)
 - `POST /loan/prepayment` — prepayment/lump-sum simulation
 - `POST /risk/predict` — RandomForest risk classification + SHAP-based explanation
+- `POST /auth/register`, `POST /auth/login` — user accounts, backed by the
+  *same* sqlite3 + PBKDF2 store `utils/auth.py` already used from the
+  Streamlit app (one users table, not a second parallel one); login returns
+  a short-lived JWT bearer token
+- `GET /history`, `POST /history`, `DELETE /history/{id}` — saved-scenario
+  CRUD, scoped to the authenticated user. Ownership is enforced at the SQL
+  layer (`WHERE id = ? AND username = ?`), not just in the route handler,
+  so one user can never read or delete another user's scenario even by
+  guessing its id
 - `GET /health`
+
+Auth notes:
+- Tokens are signed HS256 JWTs (PyJWT), expire after 60 minutes by default
+  (`ACCESS_TOKEN_EXPIRE_MINUTES`), and are required as
+  `Authorization: Bearer <token>` on every `/history` request.
+- The default `SECRET_KEY` in `app/core/config.py` is a **development-only**
+  placeholder. Set a real random value via `SECRET_KEY` in `.env` before
+  running this anywhere reachable by anyone else — see `.env.example`.
 
 Run it locally:
 ```bash
@@ -104,14 +127,17 @@ uvicorn app.main:app --reload --port 8010
 Then open `http://localhost:8010/docs` for interactive API docs.
 
 **Roadmap (not yet built — tracked honestly, not claimed as done):**
-- User auth + saved-scenario history exposed via the API (currently only in
-  the Streamlit app's local SQLite-backed `utils/auth.py`)
 - `POST /ai/explain` — Gemini-generated natural-language explanation of an
   already-computed risk result (Gemini explains, it never calculates)
 - Kafka event publishing (`LoanCreated`, `RiskCalculated`) for downstream
   analytics
 - Dockerfile + docker-compose + GitHub Actions CI
+- Rate limiting on `/auth/login` (brute-force mitigation) — not yet added
+  here; DevTrack has an equivalent Redis-backed implementation this project
+  could reuse the pattern from once this API has its own Redis dependency
+  for something else that justifies adding it
 - Airflow DAG for scheduled batch risk scoring
 
 The Streamlit app (`app.py`) is unchanged and still works standalone; it does
+
 not yet call this API internally.

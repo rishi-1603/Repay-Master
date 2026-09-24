@@ -74,13 +74,17 @@ def authenticate(username, password):
 
 
 def save_scenario(username, label, params: dict):
+    """Returns the new row's id (the Streamlit UI ignores the return value,
+    so adding it is backward compatible; the FastAPI /history endpoint uses
+    it to hand the client back a complete record without re-querying)."""
     conn = _connect()
     try:
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO saved_scenarios (username, label, params_json, created_at) VALUES (?, ?, ?, ?)",
             (username, label, json.dumps(params), datetime.now().strftime("%Y-%m-%d %H:%M")),
         )
         conn.commit()
+        return cur.lastrowid
     finally:
         conn.close()
 
@@ -101,9 +105,16 @@ def get_saved_scenarios(username):
 
 
 def delete_scenario(scenario_id, username):
+    """Returns True if a row was actually deleted. The AND username = ?
+    clause means a user can never delete another user's scenario even by
+    guessing an id -- ownership is enforced here at the SQL layer, not in
+    whatever calls this function. (The Streamlit UI ignores the return
+    value, so adding it is backward compatible; the FastAPI /history
+    endpoint uses it to return 404 instead of silently no-op'ing.)"""
     conn = _connect()
     try:
-        conn.execute("DELETE FROM saved_scenarios WHERE id = ? AND username = ?", (scenario_id, username))
+        cur = conn.execute("DELETE FROM saved_scenarios WHERE id = ? AND username = ?", (scenario_id, username))
         conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()

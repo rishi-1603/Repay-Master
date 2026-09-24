@@ -6,3 +6,8 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+
+# Runtime sqlite DB used by utils/auth.py -- contains real user password
+# hashes once anyone registers; must never be committed.
+data/app.db
+*.db
