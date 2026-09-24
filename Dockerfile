@@ -7,13 +7,23 @@
 # sys.path insertion -- this Dockerfile's directory layout must match what
 # that code expects on disk: /app/utils, /app/models, /app/backend.
 #
-# NOT VERIFIED: no Docker daemon is available in the sandbox this was
-# written in, so this has not actually been built or run. It is reasoned
-# from the real, tested local dependency/path layout (confirmed working via
-# `uvicorn app.main:app` against a real venv), not fabricated -- but "docker
-# build succeeds" and "the container actually starts" are both unverified
-# claims until someone with Docker runs it.
-FROM python:3.12-slim
+# VERIFICATION STATUS (updated Day 3): this image BUILDS -- confirmed by
+# the `docker-build` CI job on GitHub Actions (run 35996304233, commit
+# ae413bb), which was the first time anything had ever actually built it
+# (no Docker daemon exists in the sandbox it was written in). What is
+# still NOT verified is that a container started from it RUNS correctly
+# end-to-end: that CI job only builds, it does not run the app or drive
+# any requests through it. See docker-compose.yml for the compose stack,
+# which has never been brought up by anything.
+#
+# Base image pinned to a specific Debian release: an unpinned
+# `python:3.12-slim` silently changes its Debian base over time. That
+# broke the sibling CertiFake project's image build when slim moved to
+# trixie and three of its apt package names stopped existing. This
+# Dockerfile installs no apt packages, so it is not exposed to that
+# specific failure today -- but pinning keeps the build reproducible if
+# system deps are ever added.
+FROM python:3.12-slim-trixie
 
 WORKDIR /app
 

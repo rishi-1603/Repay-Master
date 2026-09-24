@@ -132,12 +132,13 @@ Or with Docker:
 cp backend/.env.example .env   # then edit SECRET_KEY in it
 docker compose up --build
 ```
-Note: the Dockerfile/docker-compose setup has not been verified against an
-actual Docker daemon (none was available in the environment this was
-developed in) — it is reasoned from the real, tested local dependency and
-import-path layout, not fabricated, but "the container actually builds and
-runs" is unverified until CI's `docker-build` job (see below) runs it for
-real, or a human does.
+Verification status: the **image builds** — confirmed by the `docker-build`
+CI job on GitHub Actions (run 35996304233), which was the first time
+anything had actually built it (no Docker daemon exists in the environment
+this was developed in). What is *not* verified is that a container started
+from it runs correctly end-to-end — that job only builds, it does not run
+the app. `docker compose up` has likewise never been brought up by
+anything.
 
 **CI (GitHub Actions, `.github/workflows/ci.yml`):** lint (ruff) + a
 dependency vulnerability scan (pip-audit, non-blocking) + the test suite,
