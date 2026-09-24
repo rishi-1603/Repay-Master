@@ -16,8 +16,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from utils.auth import delete_scenario, get_saved_scenarios, save_scenario  # noqa: E402
-from app.core.security import get_current_username
-from app.schemas.auth import ScenarioCreate, ScenarioRead
+
+from app.core.security import get_current_username  # noqa: E402
+from app.schemas.auth import ScenarioCreate, ScenarioRead  # noqa: E402
 
 router = APIRouter(prefix="/history", tags=["history"])
 

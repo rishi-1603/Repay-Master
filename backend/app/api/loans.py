@@ -22,7 +22,8 @@ from utils.finance import (  # noqa: E402
     simulate_prepayment,
     suggest_repayment_period,
 )
-from app.schemas.loan import (
+
+from app.schemas.loan import (  # noqa: E402
     AffordabilityBreakdown,
     LoanCalculateRequest,
     LoanCalculateResponse,

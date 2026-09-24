@@ -24,13 +24,20 @@ class Settings(BaseSettings):
     # JWT for /history: a REST API has no server-side session to lean on, so
     # a short-lived signed bearer token issued at /auth/login is how
     # subsequent requests prove who they are without re-hitting sqlite with
-    # a password on every call. This default is fine for local development
-    # only -- it is intentionally NOT a secure production value, and is
-    # flagged as such in .env.example and the README (same known gap as
-    # DevTrack's SECRET_KEY, tracked honestly rather than silently shipped).
-    SECRET_KEY: str = "dev-only-insecure-secret-change-in-production"
+    # a password on every call.
+    #
+    # No default on purpose (Day 3 fix, applied here for the same reason it
+    # was applied to the sibling DevTrack project the same day): a
+    # hardcoded fallback secret would silently sign real JWTs with a
+    # well-known string in any environment where SECRET_KEY was forgotten,
+    # including production. Missing SECRET_KEY is now a loud startup
+    # failure instead. See backend/app/tests/conftest.py for how tests
+    # supply one, and .env.example / docker-compose.yml for how a real
+    # deployment must.
+    SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
 
 
 @lru_cache

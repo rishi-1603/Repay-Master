@@ -6,8 +6,6 @@ degrades to a proper 503 rather than an unhandled 500.
 """
 from unittest.mock import patch
 
-import pytest
-
 
 def test_predict_risk_returns_valid_response(client):
     response = client.post(

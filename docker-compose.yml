@@ -1,0 +1,31 @@
+# NOT VERIFIED: no Docker daemon in the sandbox this was written in -- see
+# Dockerfile's header comment. Reasoned from the real, tested app layout,
+# not fabricated, but unverified as an actual running container.
+#
+# Only one service: this API has no Postgres/Redis/Kafka dependency (see
+# README -- those are explicitly NOT added because nothing here needs
+# them yet, not because they were forgotten).
+services:
+  api:
+    build: .
+    container_name: repaymaster_api
+    ports:
+      - "8010:8010"
+    environment:
+      APP_NAME: RepayMaster API
+      APP_ENV: development
+      DEBUG: "true"
+      CORS_ORIGINS: "*"
+      # Required -- app/core/config.py has no fallback, so the container
+      # will fail to start (loudly) without this set. Set it in a real
+      # .env file; see backend/.env.example.
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in a .env file -- see backend/.env.example}
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+    volumes:
+      # Persists the sqlite user/scenario DB (utils/auth.py) across
+      # container restarts and recreations -- without this, `docker
+      # compose down` would silently delete every registered user.
+      - repaymaster_data:/app/data
+
+volumes:
+  repaymaster_data:

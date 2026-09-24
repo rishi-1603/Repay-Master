@@ -12,7 +12,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from utils.risk import explain_prediction, load_model_metrics, load_risk_model, predict_risk  # noqa: E402
-from app.schemas.risk import RiskFactor, RiskPredictRequest, RiskPredictResponse
+
+from app.schemas.risk import RiskFactor, RiskPredictRequest, RiskPredictResponse  # noqa: E402
 
 router = APIRouter(prefix="/risk", tags=["risk"])
 

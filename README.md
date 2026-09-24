@@ -114,9 +114,10 @@ Auth notes:
 - Tokens are signed HS256 JWTs (PyJWT), expire after 60 minutes by default
   (`ACCESS_TOKEN_EXPIRE_MINUTES`), and are required as
   `Authorization: Bearer <token>` on every `/history` request.
-- The default `SECRET_KEY` in `app/core/config.py` is a **development-only**
-  placeholder. Set a real random value via `SECRET_KEY` in `.env` before
-  running this anywhere reachable by anyone else — see `.env.example`.
+- `SECRET_KEY` is **required** (no default) — the app fails to start
+  immediately with a clear error if it isn't set, rather than silently
+  falling back to a hardcoded value. Set a real random value via
+  `SECRET_KEY` in `.env` — see `.env.example`.
 
 Run it locally:
 ```bash
@@ -126,12 +127,29 @@ uvicorn app.main:app --reload --port 8010
 ```
 Then open `http://localhost:8010/docs` for interactive API docs.
 
+Or with Docker:
+```bash
+cp backend/.env.example .env   # then edit SECRET_KEY in it
+docker compose up --build
+```
+Note: the Dockerfile/docker-compose setup has not been verified against an
+actual Docker daemon (none was available in the environment this was
+developed in) — it is reasoned from the real, tested local dependency and
+import-path layout, not fabricated, but "the container actually builds and
+runs" is unverified until CI's `docker-build` job (see below) runs it for
+real, or a human does.
+
+**CI (GitHub Actions, `.github/workflows/ci.yml`):** lint (ruff) + a
+dependency vulnerability scan (pip-audit, non-blocking) + the test suite,
+plus a separate job that builds the Docker image — the first real
+verification that the Dockerfile builds at all, since it couldn't be
+tested locally for the reason above.
+
 **Roadmap (not yet built — tracked honestly, not claimed as done):**
 - `POST /ai/explain` — Gemini-generated natural-language explanation of an
   already-computed risk result (Gemini explains, it never calculates)
 - Kafka event publishing (`LoanCreated`, `RiskCalculated`) for downstream
   analytics
-- Dockerfile + docker-compose + GitHub Actions CI
 - Rate limiting on `/auth/login` (brute-force mitigation) — not yet added
   here; DevTrack has an equivalent Redis-backed implementation this project
   could reuse the pattern from once this API has its own Redis dependency

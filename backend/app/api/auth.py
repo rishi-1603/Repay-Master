@@ -18,8 +18,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from utils.auth import authenticate, register_user  # noqa: E402
-from app.core.security import create_access_token
-from app.schemas.auth import LoginRequest, RegisterRequest, RegisterResponse, TokenResponse
+
+from app.core.security import create_access_token  # noqa: E402
+from app.schemas.auth import LoginRequest, RegisterRequest, RegisterResponse, TokenResponse  # noqa: E402
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+# Matches the identical config already used in the sibling DevTrack
+# project: E/F/W/I (pycodestyle errors, pyflakes, warnings, isort) only.
+# Deliberately NOT enabling flake8-bugbear (B) -- its B008 rule flags
+# `Depends(...)` used as an argument default, which is the standard,
+# idiomatic FastAPI dependency-injection pattern used throughout this
+# codebase (app/core/security.py, every route handler), not a real bug.
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
