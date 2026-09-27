@@ -19,6 +19,26 @@ import utils.auth as auth_module  # noqa: E402
 from app.main import app  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _reset_login_limiter():
+    """Give every test a clean rate-limit slate.
+
+    The limiter is process-global by design (it has to be, to see repeat
+    attempts across requests), and under TestClient every request shares one
+    client IP -- so without this, login attempts accumulate ACROSS tests.
+    The suite happened to pass before this fixture existed, but only because
+    it stayed under the per-IP budget by luck; adding tests that deliberately
+    hammer /auth/login would have tripped the limit and failed unrelated
+    later tests. Resetting both before and after keeps each test independent
+    in both directions.
+    """
+    from app.core.rate_limit import login_limiter
+
+    login_limiter._events.clear()
+    yield
+    login_limiter._events.clear()
+
+
 @pytest.fixture()
 def client() -> TestClient:
     return TestClient(app)

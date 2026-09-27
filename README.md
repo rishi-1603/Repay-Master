@@ -102,7 +102,8 @@ logic is no longer only reachable from inside the Streamlit process.
 - `POST /auth/register`, `POST /auth/login` — user accounts, backed by the
   *same* sqlite3 + PBKDF2 store `utils/auth.py` already used from the
   Streamlit app (one users table, not a second parallel one); login returns
-  a short-lived JWT bearer token
+  a short-lived JWT bearer token. Login is additionally **rate limited**
+  against brute-force and credential-stuffing attempts (see below)
 - `GET /history`, `POST /history`, `DELETE /history/{id}` — saved-scenario
   CRUD, scoped to the authenticated user. Ownership is enforced at the SQL
   layer (`WHERE id = ? AND username = ?`), not just in the route handler,
@@ -118,6 +119,67 @@ Auth notes:
   immediately with a clear error if it isn't set, rather than silently
   falling back to a hardcoded value. Set a real random value via
   `SECRET_KEY` in `.env` — see `.env.example`.
+
+### Login rate limiting (`backend/app/core/rate_limit.py`)
+
+`POST /auth/login` enforces two independent limits, both checked **before**
+any password hashing runs — a throttled attacker gets a cheap `429` instead
+of the server paying for a PBKDF2 derivation on every guess:
+
+| Limit | Default | Counts | Why it exists |
+|---|---|---|---|
+| per client IP | 20 / 60s | *every* attempt | credential stuffing — many usernames from one host |
+| per account | 5 failures / 300s | failures only | distributed guessing of one username from many hosts |
+
+Each alone is trivially evaded (rotate IPs, or spread across usernames), so
+both are needed. A successful login clears that account's failure history, so
+a user who mistypes twice isn't left one typo from a lockout. Rejections
+return `429` with a `Retry-After` header, and the response body is identical
+whether the IP or the account tripped — revealing which would let an attacker
+tune the other. All four values are configurable via env (`LOGIN_IP_LIMIT`,
+`LOGIN_IP_WINDOW_SECONDS`, `LOGIN_ACCOUNT_FAILURE_LIMIT`,
+`LOGIN_ACCOUNT_WINDOW_SECONDS`).
+
+**Why in-process rather than Redis here.** The sibling projects (DevTrack,
+CertiFake) both rate-limit through Redis; this one deliberately does not. This
+API is a single-process service backed by a sqlite file, with no second
+replica and no existing Redis dependency for anything else. Adding Redis
+solely to hold login counters would mean a new service, container, failure
+mode and "what if Redis is down" question — to protect one endpoint on one
+process whose entire state fits in memory. The honest limitations that follow
+from that choice:
+
+1. **State is per-process.** Run uvicorn with `--workers 4` and the effective
+   limit becomes 4× the configured one. The correct fix at that point is a
+   shared store — which is precisely the condition under which adding Redis
+   *would* be justified.
+2. **State does not survive a restart.** A redeploy clears counters.
+3. **Client IP is the socket peer, not `X-Forwarded-For`.** That header is
+   client-controlled, so trusting it without a known-proxy allowlist would let
+   an attacker rotate it and bypass the per-IP limit entirely — strictly worse
+   than the honest limitation that behind a reverse proxy all clients share one
+   bucket. Per-account limiting still works correctly behind a proxy.
+
+Two implementation details worth knowing, because both were found by testing
+rather than assumed:
+
+- **Sliding-window log, not fixed window.** The Redis implementations
+  elsewhere in this portfolio use `INCR`+`EXPIRE` (fixed window), which admits
+  up to ~2× the limit straddling a window boundary — an acceptable trade-off
+  there because it saves round-trips. Here the state is already local, so the
+  more accurate algorithm costs nothing and closes that loophole. A test runs
+  the same scenario against a minimal fixed-window counter and asserts the two
+  algorithms actually disagree.
+- **`attempt()` checks and consumes under one lock acquisition.** `login` is a
+  synchronous `def`, so FastAPI runs it in a threadpool and requests genuinely
+  execute concurrently. A `peek()`-then-`record()` pair is a check-then-act
+  race: measured with a slow clock, it admitted **60 requests against a limit
+  of 10**. The atomic `attempt()` admits exactly 10. Both a timing-independent
+  test (lock-acquisition count must be 1) and an empirical one pin this, and
+  both were verified to fail if the atomic version is reverted to the pair.
+- **Tracked keys are capped** (LRU eviction at 5,000) because a limiter keyed
+  by username is itself a memory-exhaustion vector: an attacker can send logins
+  for millions of random usernames to grow the dict without bound.
 
 Run it locally:
 ```bash
@@ -151,10 +213,6 @@ tested locally for the reason above.
   already-computed risk result (Gemini explains, it never calculates)
 - Kafka event publishing (`LoanCreated`, `RiskCalculated`) for downstream
   analytics
-- Rate limiting on `/auth/login` (brute-force mitigation) — not yet added
-  here; DevTrack has an equivalent Redis-backed implementation this project
-  could reuse the pattern from once this API has its own Redis dependency
-  for something else that justifies adding it
 - Airflow DAG for scheduled batch risk scoring
 
 The Streamlit app (`app.py`) is unchanged and still works standalone; it does

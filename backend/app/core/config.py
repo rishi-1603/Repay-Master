@@ -38,6 +38,23 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
+    # Brute-force mitigation on POST /auth/login (Day 4). Two independent
+    # limits, because each alone is trivially evaded:
+    #   - per-IP bounds one source hammering many usernames (credential
+    #     stuffing), which a per-account limit would never see.
+    #   - per-account bounds many distributed sources guessing one
+    #     username, which a per-IP limit would never see.
+    # The per-IP limit counts EVERY attempt and is generous; the per-account
+    # limit counts only FAILED attempts and is tight, and resets on success --
+    # so a legitimate user who mistypes once and then succeeds is not
+    # penalised, while an attacker guessing at one account is stopped after
+    # a handful of tries. See app/core/rate_limit.py for why these are
+    # in-process rather than Redis-backed in this project specifically.
+    LOGIN_IP_LIMIT: int = 20
+    LOGIN_IP_WINDOW_SECONDS: int = 60
+    LOGIN_ACCOUNT_FAILURE_LIMIT: int = 5
+    LOGIN_ACCOUNT_WINDOW_SECONDS: int = 300
+
 
 
 @lru_cache
