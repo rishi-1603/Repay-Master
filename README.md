@@ -194,19 +194,57 @@ Or with Docker:
 cp backend/.env.example .env   # then edit SECRET_KEY in it
 docker compose up --build
 ```
-Verification status: the **image builds** — confirmed by the `docker-build`
-CI job on GitHub Actions (run 35996304233), which was the first time
-anything had actually built it (no Docker daemon exists in the environment
-this was developed in). What is *not* verified is that a container started
-from it runs correctly end-to-end — that job only builds, it does not run
-the app. `docker compose up` has likewise never been brought up by
-anything.
+Verification status (updated Day 5):
+- **The image builds** — confirmed by the `docker-build` CI job on GitHub
+  Actions (run 35996304233), which was the first time anything had actually
+  built it (no Docker daemon exists in the environment this was developed in).
+- **`docker-compose.yml` is now syntactically validated** by `docker compose
+  config` in CI, and `scripts/check_images.py` confirms every referenced image
+  — including the pinned `python:3.12-slim-trixie` base — still resolves in its
+  registry.
+- **Still NOT verified: that a container actually runs.** The build job only
+  builds; it never starts the app or drives a request through it. `docker
+  compose up` has never been brought up by anything, so the healthcheck added
+  on Day 5 has never been observed to pass.
+
+### Deployment config checks (Day 5)
+
+Added `healthcheck` (Python against `GET /health` on 8010 — the image installs
+no apt packages at all, so there is no curl/wget/nc to use) and
+`restart: unless-stopped` to the single `api` service.
+
+Two CI checks were added, neither of which needs a Docker daemon:
+`scripts/check_images.py` resolves every image reference against its registry,
+and `scripts/check_config_consistency.py` asserts cross-file agreement (a
+service whose env points at another service must declare the `depends_on` edge;
+nothing may gate on `service_healthy` for a service with no healthcheck; no
+placeholder image strings).
+
+**Why a project with one service and no infrastructure needs these at all:**
+the sibling CertiFake project's compose stack was broken for **17 days**
+because MinIO deleted `minio/minio` from Docker Hub on 2026-09-11, and nothing
+caught it — `docker-compose config` validates syntax, not whether an image
+still exists. This project's exposure is smaller but real and identical in
+kind: an unpinned or deleted base image breaks the build with no commit to this
+repo. Both scripts are byte-identical to CertiFake's and DevTrack's copies on
+purpose; three divergent forks of a config checker would be the duplication
+problem it exists to prevent. Both were mutation-tested against deliberately
+reintroduced defects (8 of 8 caught) — which was not a formality, since an
+earlier version silently skipped *every* Kubernetes check while still printing
+PASS.
+
+Note this compose file has no `depends_on` at all, and that is correct rather
+than an omission: the API has no Postgres/Redis/Kafka dependency (see above —
+deliberately not added, because nothing here needs them). It is also why the
+Day-4 rate limiter can be in-process: a single container is the whole
+deployment, so per-process state *is* global state. Running this compose file
+with `scale api=2` would break that limiter's guarantees, which is the
+condition under which Redis would finally be justified.
 
 **CI (GitHub Actions, `.github/workflows/ci.yml`):** lint (ruff) + a
 dependency vulnerability scan (pip-audit, non-blocking) + the test suite,
-plus a separate job that builds the Docker image — the first real
-verification that the Dockerfile builds at all, since it couldn't be
-tested locally for the reason above.
+plus a job that builds the Docker image and a `config-validation` job
+(compose validation + image-availability + cross-file consistency).
 
 **Roadmap (not yet built — tracked honestly, not claimed as done):**
 - `POST /ai/explain` — Gemini-generated natural-language explanation of an

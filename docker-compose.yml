@@ -1,10 +1,19 @@
-# NOT VERIFIED: no Docker daemon in the sandbox this was written in -- see
-# Dockerfile's header comment. Reasoned from the real, tested app layout,
-# not fabricated, but unverified as an actual running container.
+# VERIFICATION STATUS (updated Day 5): this file is now validated in CI by
+# `docker compose config`, which parses and interpolates it exactly as the
+# engine would -- so its syntax, variable interpolation and schema are
+# verified. What is STILL not verified is runtime: no Docker daemon existed
+# where this was written, so nothing has ever started these containers,
+# confirmed the healthcheck passes, or driven a request through the app.
+# `scripts/check_images.py` (also in CI) separately confirms every referenced
+# base image still exists in its registry -- the check that would have caught
+# the sibling CertiFake project's stack being broken for 17 days by MinIO
+# deleting its images from Docker Hub on 2026-09-11.
 #
 # Only one service: this API has no Postgres/Redis/Kafka dependency (see
 # README -- those are explicitly NOT added because nothing here needs
-# them yet, not because they were forgotten).
+# them yet, not because they were forgotten). That is also why the
+# in-process rate limiter added on Day 4 is safe here and would not be in a
+# multi-replica deployment.
 services:
   api:
     build: .
@@ -26,6 +35,22 @@ services:
       # container restarts and recreations -- without this, `docker
       # compose down` would silently delete every registered user.
       - repaymaster_data:/app/data
+    # Python, not curl: the Dockerfile installs no apt packages at all on
+    # python:3.12-slim-trixie, so curl/wget/nc are absent. GET /health exists
+    # in backend/app/main.py and the container listens on 8010.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
 
 volumes:
   repaymaster_data:
