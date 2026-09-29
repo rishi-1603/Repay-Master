@@ -65,6 +65,73 @@ jobs:
       - name: Build image
         run: docker build -t repaymaster-api:ci .
 
+  # ===========================================================================
+  # Boots docker-compose.yml for real and drives requests through the running
+  # container.
+  #
+  # WHY BUILDING IS NOT ENOUGH HERE
+  # --------------------------------
+  # This project's headline feature is an ML endpoint backed by joblib
+  # artifacts in models/. utils/risk.py loads them LAZILY behind
+  # functools.lru_cache, so nothing touches those files at import time or at
+  # build time: a container whose artifacts are missing, truncated, or
+  # unreadable by the image's own scikit-learn builds perfectly, passes
+  # `docker build`, and then returns 503 on the first /risk/predict. The
+  # docker-build job above therefore cannot vouch for the feature this repo
+  # exists for, and the pytest suite runs against the runner's Python and the
+  # runner's copy of the repo -- not the image.
+  #
+  # Both docker-compose.yml and Dockerfile carried an explicit note that
+  # runtime was unverified ("nothing has ever started these containers,
+  # confirmed the healthcheck passes, or driven a request through the app").
+  # That was accurate when written. This job is what retires it.
+  #
+  # Also verified here, for the first time: that the python/urllib healthcheck
+  # actually passes (this image installs no apt packages, so it has no
+  # curl/wget/nc to probe with), and that utils/auth.py's sqlite DB really
+  # lands in the repaymaster_data volume at /app/data/app.db rather than in a
+  # container-local path that `compose down` would delete along with every
+  # registered user.
+  #
+  # Assertions live in scripts/compose_smoke_test.sh.
+  # ===========================================================================
+  compose-smoke-test:
+    runs-on: ubuntu-latest
+    needs: docker-build
+    timeout-minutes: 20
+
+    env:
+      # compose requires this to interpolate (`${SECRET_KEY:?...}`);
+      # app/core/config.py has no fallback, so the container fails loudly
+      # without it. Throwaway value -- not a real credential.
+      SECRET_KEY: ci-smoke-only-not-a-real-secret
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # --wait blocks until the healthcheck reports healthy, so this step is
+      # itself the empirical confirmation that the healthcheck works.
+      - name: Boot the stack and wait for the healthcheck
+        run: |
+          docker compose version
+          docker compose up -d --build --wait --wait-timeout 600
+
+      - name: Report container state
+        if: always()
+        run: docker compose ps -a
+
+      - name: Run the compose smoke test
+        run: bash scripts/compose_smoke_test.sh
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs --tail 150
+
+      - name: Tear down (volumes too, so no user/scenario rows leak between runs)
+        if: always()
+        run: docker compose down -v --remove-orphans --timeout 30
+
   config-validation:
     # Deployment-config checks, added Day 5. Motivation is concrete: the
     # sibling CertiFake project's compose stack sat broken for 17 days
