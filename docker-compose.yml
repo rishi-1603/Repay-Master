@@ -1,9 +1,34 @@
-# VERIFICATION STATUS (updated Day 5): this file is now validated in CI by
-# `docker compose config`, which parses and interpolates it exactly as the
-# engine would -- so its syntax, variable interpolation and schema are
-# verified. What is STILL not verified is runtime: no Docker daemon existed
-# where this was written, so nothing has ever started these containers,
-# confirmed the healthcheck passes, or driven a request through the app.
+# VERIFICATION STATUS (updated Day 6): this file is validated in CI by
+# `docker compose config` (syntax, interpolation and schema) and is now also
+# BOUGHT AND EXERCISED by the `compose-smoke-test` job, which runs
+# `docker compose up -d --build --wait` and then drives real requests through
+# the running container via scripts/compose_smoke_test.sh.
+#
+# Confirmed passing on commit 4cda54b (run 36611637287, 2026-09-29). What that
+# run actually observed, not inferred:
+#   * the container reached Docker's own `healthy` state, so the python/urllib
+#     healthcheck below passes for real -- it exists because this image
+#     installs no apt packages at all and has no curl/wget/nc to probe with;
+#   * the three models/ artifacts are present and non-empty INSIDE the running
+#     container, and /risk/predict returned a real class ("High") with five
+#     SHAP factor contributions, so joblib deserialization and the explanation
+#     step work in the image and not merely on a dev machine;
+#   * model_test_accuracy came back as exactly 80.0, matching
+#     models/metrics.json -- the check that matters, because
+#     utils/risk.py:load_model_metrics() swallows every read error and returns
+#     None, so a missing artifact would have degraded silently instead of
+#     failing;
+#   * /loan/calculate and /loan/prepayment return real maths (paying an extra
+#     5000/month cut a 60-month term to 38, saving 22 months);
+#   * register -> login -> save scenario -> list -> delete all work, and the
+#     sqlite DB lands at /app/data/app.db inside the repaymaster_data volume
+#     rather than a container-local path `compose down` would delete with every
+#     registered user.
+#
+# The earlier caveat here -- "no Docker daemon existed where this was written,
+# so nothing has ever started these containers" -- was accurate for the whole
+# life of the project up to that run, and is what the job was added to retire.
+#
 # `scripts/check_images.py` (also in CI) separately confirms every referenced
 # base image still exists in its registry -- the check that would have caught
 # the sibling CertiFake project's stack being broken for 17 days by MinIO

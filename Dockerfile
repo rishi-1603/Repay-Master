@@ -7,14 +7,25 @@
 # sys.path insertion -- this Dockerfile's directory layout must match what
 # that code expects on disk: /app/utils, /app/models, /app/backend.
 #
-# VERIFICATION STATUS (updated Day 3): this image BUILDS -- confirmed by
-# the `docker-build` CI job on GitHub Actions (run 35996304233, commit
-# ae413bb), which was the first time anything had ever actually built it
-# (no Docker daemon exists in the sandbox it was written in). What is
-# still NOT verified is that a container started from it RUNS correctly
-# end-to-end: that CI job only builds, it does not run the app or drive
-# any requests through it. See docker-compose.yml for the compose stack,
-# which has never been brought up by anything.
+# VERIFICATION STATUS (updated Day 6): this image BUILDS -- confirmed by the
+# `docker-build` CI job (run 35996304233, commit ae413bb), which was the first
+# time anything had ever actually built it, no Docker daemon existing in the
+# sandbox it was written in.
+#
+# A container started from it also RUNS correctly end to end, which was the
+# outstanding caveat here until Day 6. The `compose-smoke-test` CI job boots
+# the compose stack and drives real requests through this image's uvicorn
+# process; it passed on commit 4cda54b (run 36611637287, 2026-09-29), having
+# observed the container reach Docker-healthy, the models/*.joblib artifacts
+# load and predict inside it, and the sqlite DB persist to the /app/data
+# volume. docker-compose.yml records the full list of what was checked.
+#
+# Still NOT covered by anything, stated so the green check is not over-read:
+# this image serves only the FastAPI backend. The Streamlit front end (app.py at
+# the repo root) is not part of docker-compose.yml and has never been
+# containerized or smoke-tested -- the checks above cover the API surface the
+# UI calls, not the UI. This repo has no Kubernetes manifests at all, so unlike
+# its two siblings there is no deployment schema being validated here either.
 #
 # Base image pinned to a specific Debian release: an unpinned
 # `python:3.12-slim` silently changes its Debian base over time. That
