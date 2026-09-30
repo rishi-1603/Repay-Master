@@ -50,6 +50,7 @@ asserted in CI.
 | Training rows | 200 (201 lines incl. header) | CSV + `n_rows: 200` |
 | Features | 5, standardized | `utils/risk.py` FEATURE_NAMES + StandardScaler |
 | Password hashing | PBKDF2-HMAC-SHA256, 100k iterations, per-user salt | `utils/auth.py:39` |
+| Coverage (production code) | 97% | CI `--cov=app` with `.coveragerc` omitting `app/tests/`, added Day 7 |
 | Compose services | 1 | `docker-compose.yml`: api only |
 
 ## Interview prep — questions to be ready for
@@ -111,9 +112,11 @@ asserted in CI.
   user through the HTTP API and then logs in through the same `utils/auth.py`
   the Streamlit app uses — but nothing renders the UI. The Docker image serves
   only the FastAPI backend.
-- **No coverage measurement in CI here**, unlike the sibling DevTrack
-  (`--cov`). 54 passing tests is verified; the percentage is not measured, so
-  do not quote one.
+- **Coverage is 97% on production code** (measured from Day 7; before that no
+  number existed and none was quoted). Read it with the caveat that this
+  backend is small and mostly deterministic maths plus thin routes — a high
+  percentage here is cheaper to earn than in the sibling CertiFake, whose 78%
+  covers Kafka consumers and CV code. Do not present the two as comparable.
 - **Synthetic data, rule-derived labels** — the model card's own limitations
   section. Never let this be described as predicting real credit risk.
 - **sqlite single-file storage** is right for one process and wrong for many;

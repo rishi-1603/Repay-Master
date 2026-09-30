@@ -47,7 +47,9 @@ jobs:
       - name: Run tests
         env:
           SECRET_KEY: ci-only-secret-not-used-anywhere-real
-        run: pytest app/tests/ -v
+        # --cov added Day 7; see backend/requirements.txt note. term-missing
+        # keeps the gaps visible in the log rather than hiding behind a total.
+        run: pytest app/tests/ -v --cov=app --cov-report=term-missing
 
   docker-build:
     # Verifies the Dockerfile at the repo root actually builds -- this

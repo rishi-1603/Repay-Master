@@ -9,4 +9,8 @@ scikit-learn==1.9.1
 shap
 PyJWT==2.10.1
 pytest==8.3.3
+# Added Day 7 so coverage is measured in CI rather than absent (this repo's
+# test job ran bare `pytest`, so no percentage existed to quote). Pin matches
+# the sibling DevTrack's.
+pytest-cov==5.0.0
 httpx==0.27.2
