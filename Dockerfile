@@ -51,7 +51,7 @@ COPY backend/requirements.txt backend/requirements.txt
 # ensurepip does not bundle setuptools, so unlike the 3.11-based CertiFake image
 # there is nothing else in here to upgrade.
 RUN pip install --no-cache-dir --upgrade "pip>=26.2.0"
-RUN pip install --no-cache-dir -r backend/requirements.txt backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
 
 COPY utils/ utils/
 COPY models/ models/
