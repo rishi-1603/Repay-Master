@@ -17,6 +17,12 @@ class Settings(BaseSettings):
 
     # CORS: the Streamlit client and any future frontend need to call this API
     # cross-origin during local development.
+    #
+    # The wildcard default survives for development convenience ONLY, and it is
+    # no longer able to do damage: app/core/cors.py refuses a wildcard when
+    # APP_ENV=production (loud startup failure) and never pairs a wildcard with
+    # allow_credentials in any environment. A production deployment must set
+    # this to the exact origins it serves. See finding S7 in the audit.
     CORS_ORIGINS: str = "*"
 
     GEMINI_API_KEY: str | None = None

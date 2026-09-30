@@ -1,16 +1,28 @@
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
+# All versions pinned exactly (Day-7 security remediation, finding S13).
+# Previously `pandas`, `numpy`, `joblib` and `shap` carried no version at all,
+# so two builds of the same commit could install different code -- a
+# supply-chain and reproducibility problem, and it made the dependency audit a
+# moving target. Every pin below matches a version this suite was run against.
+# fastapi 0.115.6 -> 0.142.2 (finding S10): the old pin held starlette 0.41.3
+# with six advisories. This resolves starlette 1.7.0. uvicorn is bumped with it
+# because it is the server that actually runs starlette; the app was verified to
+# serve a real HTTP request under the new pair, not just to pass unit tests.
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
 pydantic==2.10.4
 pydantic-settings==2.7.0
-pandas
-numpy
-joblib
+pandas==3.0.6
+numpy==2.5.3
+joblib==1.6.0
 scikit-learn==1.9.1
-shap
-PyJWT==2.10.1
-pytest==8.3.3
-# Added Day 7 so coverage is measured in CI rather than absent (this repo's
-# test job ran bare `pytest`, so no percentage existed to quote). Pin matches
-# the sibling DevTrack's.
-pytest-cov==5.0.0
-httpx==0.27.2
+shap==0.52.0
+# Bumped 2.10.1 -> 2.15.1 (finding S6). 2.10.1 carried 12+ advisories; 2.15.0
+# is the first release fixing the payload-recursion DoS on ordinary decode
+# paths, which this app uses. The detached-payload advisory was not reachable
+# here (no `detached_payload` / `b64:false` anywhere in app code) -- recorded
+# so the bump is not mistaken for a fix to an exploited path.
+PyJWT==2.15.1
+# Bumped 8.3.3 -> 9.1.1 (finding S11) and pytest-cov for compatibility with it.
+pytest==9.1.1
+pytest-cov==7.1.0
+httpx==0.28.1

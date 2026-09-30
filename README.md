@@ -247,13 +247,58 @@ deployment, so per-process state *is* global state. Running this compose file
 with `scale api=2` would break that limiter's guarantees, which is the
 condition under which Redis would finally be justified.
 
-**CI (GitHub Actions, `.github/workflows/ci.yml`):** lint (ruff) + a
-dependency vulnerability scan (pip-audit, non-blocking) + the 54-case test
-suite, plus a job that builds the Docker image, a `config-validation` job
-(compose validation + image-availability + cross-file consistency), and the
+**CI (GitHub Actions, `.github/workflows/ci.yml`):** lint (ruff, pinned) + a
+**blocking** dependency vulnerability scan (pip-audit) + the 75-case test suite,
+plus a job that builds the Docker image, a `config-validation` job (compose
+validation + image-availability + cross-file consistency), and the
 `compose-smoke-test` job described above.
 
+### Security posture (Day-7 remediation)
+
+Three changes, made together because each one alone would have been misleading:
+
+1. **The dependency audit now gates the build.** It previously ran
+   `pip-audit --desc || true` *and* had `continue-on-error: true` — non-blocking
+   twice over. On the last green build before this change it printed "Found 36
+   known vulnerabilities in 3 packages" and still reported `success`. The pins
+   have been bumped until the scan is genuinely clean (`No known vulnerabilities
+   found`, zero waivers), and only then was the escape hatch removed. The
+   workflow comment states the rule for the future: an unfixable advisory gets
+   an explicit `--ignore-vuln <ID>` with a written reason and a re-review date,
+   never a blanket `|| true`.
+2. **Bumped pins:** PyJWT 2.10.1 → 2.15.1 (12+ advisories, including the
+   payload-recursion DoS on ordinary decode paths that this app uses), FastAPI
+   0.115.6 → 0.142.2 (which moves Starlette 0.41.3 → 1.7.0, clearing six
+   advisories), pytest 8.3.3 → 9.1.1, uvicorn 0.34.0 → 0.54.0. The
+   `pandas`/`numpy`/`joblib`/`shap` pins that carried no version at all are now
+   exact, so two builds of one commit cannot install different code. The app was
+   verified to serve a real HTTP request under the new Starlette/uvicorn pair,
+   not merely to pass unit tests.
+   *Not* reachable here, and recorded so the bump is not over-claimed: the
+   PyJWT detached-payload advisory needs `detached_payload`/`b64:false`, which
+   appears nowhere in this codebase, and the Starlette advisories concern
+   `StaticFiles`/`FileResponse`, `request.url.hostname`, bare `HTTPEndpoint` and
+   urlencoded form limits — also unused.
+3. **CORS can no longer be configured unsafely** (`app/core/cors.py`). The old
+   `CORS_ORIGINS="*"` default combined with a hardcoded `allow_credentials=True`;
+   in that combination Starlette echoes the caller's `Origin` rather than
+   sending `*`, which trusts every website for credentialed cross-origin
+   requests. Now: a wildcard under `APP_ENV=production` fails startup loudly
+   (the pattern already used here for `SECRET_KEY`), `allow_credentials` is
+   derived rather than hardcoded and is `False` whenever origins are a wildcard,
+   and an unset/empty value denies cross-origin access instead of permitting
+   all. Rated MEDIUM rather than HIGH because this API uses Bearer tokens and
+   never sets a cookie — a latent bug, not an exploited one. 21 tests cover it,
+   including one that asserts the unsafe pairing cannot be produced for any
+   environment name.
+
 ## Future Improvements (not built — tracked honestly, not claimed as done)
+- **A real evaluation of the model.** The 80.0% figure in `models/metrics.json`
+  is measured and asserted exactly by the CI smoke test, but it is 40 held-out
+  rows of a 200-row synthetic dataset with rule-derived labels. Cross-validation,
+  calibration and per-class metrics on data that is not generated from the same
+  thresholds the labels came from — that is the work, and until then the number
+  should be quoted with its sample size attached.
 - `POST /ai/explain` — Gemini-generated natural-language explanation of an
   already-computed risk result (Gemini explains, it never calculates)
 - Kafka event publishing (`LoanCreated`, `RiskCalculated`) for downstream

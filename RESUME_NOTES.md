@@ -1,11 +1,12 @@
 # Repay-Master — Resume & LinkedIn Bullet Points
 
-*Added Day 7, in the same format as the sibling DevTrack's notes. Numbers are
-measured: 54 from the CI `test` job (`54 passed, 1 warning in 5.90s` on commit
-`f87a042`); model figures from `models/metrics.json`, cross-checked against
-`train_model.py`; container behaviour from the Day-6 `compose-smoke-test` run.
-Anything not verified is listed as such at the bottom rather than left to be
-assumed.*
+*Added Day 7, in the same format as the sibling DevTrack's notes, and updated
+the same day after the security remediation. Numbers are measured: 75 from the
+CI `test` job; model figures from `models/metrics.json`, cross-checked against
+`train_model.py`; container behaviour from the Day-6 `compose-smoke-test` run;
+dependency-audit status from a local `pip-audit` of the exact pinned set (and
+from the CI step that now gates on it). Anything not verified is listed as such
+at the bottom rather than left to be assumed.*
 
 ## Resume bullet points (pick 2-3 based on space)
 
@@ -13,7 +14,7 @@ assumed.*
   a scikit-learn `RandomForestClassifier` (200 trees) that classifies
   repayment risk as Low/Medium/High and explains each prediction with
   per-feature SHAP contributions, plus deterministic amortization and
-  prepayment simulation. 54 pytest cases in CI.
+  prepayment simulation. 75 pytest cases in CI.
 
 - Trained the model from scratch (`train_model.py`): derived risk labels from
   the same DTI/burden thresholds the app's own scoring uses, standardized
@@ -44,13 +45,14 @@ asserted in CI.
 
 | Claim | Value | Source |
 |---|---|---|
-| pytest cases | 54 | CI `test` job log |
+| pytest cases | 75 | CI `test` job log (54 before the Day-7 CORS tests) |
 | Model | RandomForestClassifier, 200 trees, `random_state=42` | `train_model.py:66` |
 | Test accuracy | 80.0% on 40 held-out rows | `models/metrics.json` + asserted by smoke test |
 | Training rows | 200 (201 lines incl. header) | CSV + `n_rows: 200` |
 | Features | 5, standardized | `utils/risk.py` FEATURE_NAMES + StandardScaler |
 | Password hashing | PBKDF2-HMAC-SHA256, 100k iterations, per-user salt | `utils/auth.py:39` |
-| Coverage (production code) | 97% | CI `--cov=app` with `.coveragerc` omitting `app/tests/`, added Day 7 |
+| Coverage (production code) | 98% | CI `--cov=app` with `.coveragerc` omitting `app/tests/`; 334 stmts, 8 missed (97% before the Day-7 CORS module) |
+| Dependency audit | clean, and blocking | CI `pip-audit --desc` — no `\|\| true`, no `continue-on-error`, no waivers: `No known vulnerabilities found` |
 | Compose services | 1 | `docker-compose.yml`: api only |
 
 ## Interview prep — questions to be ready for
@@ -112,11 +114,22 @@ asserted in CI.
   user through the HTTP API and then logs in through the same `utils/auth.py`
   the Streamlit app uses — but nothing renders the UI. The Docker image serves
   only the FastAPI backend.
-- **Coverage is 97% on production code** (measured from Day 7; before that no
-  number existed and none was quoted). Read it with the caveat that this
-  backend is small and mostly deterministic maths plus thin routes — a high
-  percentage here is cheaper to earn than in the sibling CertiFake, whose 78%
-  covers Kafka consumers and CV code. Do not present the two as comparable.
+- **Coverage is 98% on production code** (334 statements, 8 missed). Read it
+  with the caveat that this backend is small and mostly deterministic maths plus
+  thin routes — a high percentage here is cheaper to earn than in the sibling
+  CertiFake, whose 78% covers Kafka consumers and CV code. Do not present the
+  two as comparable.
+- **The Day-7 security remediation is a better story than the coverage number.**
+  This repo's CI reported `success` while printing 36 known vulnerabilities,
+  because the audit step was `pip-audit --desc || true` *and* carried
+  `continue-on-error: true` — non-blocking twice over. Being able to say "I found
+  that our green build gated on nothing, bumped the pins until the scan was clean
+  with zero waivers, and only then made it block" is worth more in an interview
+  than 98%. Be ready for the follow-up, which is the part that actually
+  demonstrates judgement: which advisories were reachable here (the PyJWT
+  payload-recursion DoS on ordinary decode paths) and which were not (the
+  detached-payload one — no `detached_payload` or `b64:false` in this codebase —
+  and the Starlette set, whose vulnerable APIs are all unused).
 - **Synthetic data, rule-derived labels** — the model card's own limitations
   section. Never let this be described as predicting real credit risk.
 - **sqlite single-file storage** is right for one process and wrong for many;

@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 
 from app.api import auth, history, loans, risk
 from app.core.config import settings
+from app.core.cors import resolve_cors_origins
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -25,11 +26,19 @@ app = FastAPI(
     version="0.1.0",
 )
 
-origins = ["*"] if settings.CORS_ORIGINS == "*" else [o.strip() for o in settings.CORS_ORIGINS.split(",")]
+# Day-7 security remediation (finding S7). Origins and the credentials flag are
+# resolved together so that the unsafe pairing -- wildcard origins WITH
+# allow_credentials, under which Starlette echoes the caller's Origin instead of
+# sending "*" and therefore trusts every website for credentialed requests --
+# cannot be configured at all. A wildcard under APP_ENV=production is a loud
+# startup failure rather than a silently permissive deployment. See
+# app/core/cors.py for the full reasoning, including why this was rated MEDIUM
+# (no cookies in this API today) rather than HIGH.
+origins, allow_credentials = resolve_cors_origins(settings.CORS_ORIGINS, settings.APP_ENV)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
