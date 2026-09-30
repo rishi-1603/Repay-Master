@@ -88,12 +88,13 @@ Repay-Master/
         └── tests/
 ```
 
-## Backend API (in progress)
+## Backend API
 
-A FastAPI backend is being built under `backend/` that wraps the existing
-deterministic finance math (`utils/finance.py`) and the ML risk model
-(`utils/risk.py`) as independently callable, tested HTTP endpoints, so this
-logic is no longer only reachable from inside the Streamlit process.
+A FastAPI backend under `backend/` wraps the existing deterministic finance
+math (`utils/finance.py`) and the ML risk model (`utils/risk.py`) as
+independently callable, tested HTTP endpoints, so this logic is no longer only
+reachable from inside the Streamlit process. It is implemented, tested (54
+pytest cases) and — since Day 6 — verified running inside its own container.
 
 **Currently implemented and tested:**
 - `POST /loan/calculate` — EMI/repayment-option calculation (Short/Recommended/Long term)
@@ -202,10 +203,15 @@ Verification status (updated Day 5):
   config` in CI, and `scripts/check_images.py` confirms every referenced image
   — including the pinned `python:3.12-slim-trixie` base — still resolves in its
   registry.
-- **Still NOT verified: that a container actually runs.** The build job only
-  builds; it never starts the app or drives a request through it. `docker
-  compose up` has never been brought up by anything, so the healthcheck added
-  on Day 5 has never been observed to pass.
+- **Verified running in CI (Day 6).** The `compose-smoke-test` job boots this
+  compose file and drives real requests through the container; it passed on
+  commit `4cda54b` (run 36611637287). Observed: the python/urllib healthcheck
+  reaching `healthy` for the first time; the joblib artifacts present and
+  non-empty inside the image; `/risk/predict` returning a real class with five
+  SHAP contributions and `model_test_accuracy` exactly 80.0 (the check that
+  matters, since `load_model_metrics()` returns `None` on any read error);
+  loan maths that actually responds to prepayment; and the sqlite DB on the
+  mounted volume. `docker-compose.yml` and `Dockerfile` record the full list.
 
 ### Deployment config checks (Day 5)
 
@@ -242,11 +248,12 @@ with `scale api=2` would break that limiter's guarantees, which is the
 condition under which Redis would finally be justified.
 
 **CI (GitHub Actions, `.github/workflows/ci.yml`):** lint (ruff) + a
-dependency vulnerability scan (pip-audit, non-blocking) + the test suite,
-plus a job that builds the Docker image and a `config-validation` job
-(compose validation + image-availability + cross-file consistency).
+dependency vulnerability scan (pip-audit, non-blocking) + the 54-case test
+suite, plus a job that builds the Docker image, a `config-validation` job
+(compose validation + image-availability + cross-file consistency), and the
+`compose-smoke-test` job described above.
 
-**Roadmap (not yet built — tracked honestly, not claimed as done):**
+## Future Improvements (not built — tracked honestly, not claimed as done)
 - `POST /ai/explain` — Gemini-generated natural-language explanation of an
   already-computed risk result (Gemini explains, it never calculates)
 - Kafka event publishing (`LoanCreated`, `RiskCalculated`) for downstream
