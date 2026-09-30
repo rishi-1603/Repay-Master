@@ -53,6 +53,7 @@ asserted in CI.
 | Password hashing | PBKDF2-HMAC-SHA256, 100k iterations, per-user salt | `utils/auth.py:39` |
 | Coverage (production code) | 98% | CI `--cov=app` with `.coveragerc` omitting `app/tests/`; 347 stmts, 8 missed (97% before the Day-7 CORS and config modules) |
 | Dependency audit | clean, and blocking | CI `pip-audit --desc` — no `\|\| true`, no `continue-on-error`, no waivers: `No known vulnerabilities found` |
+| Interpreter parity | CI == image == Python 3.12 | `check_config_consistency.py` fails `config-validation` if `ci.yml` and a Dockerfile disagree on Python; added after a sibling repo's pin was chosen against the wrong interpreter. Mutation-tested (exit 1 on mismatch) |
 | Signing-key floor | 32 bytes in production | `app/core/config.py` model validator; warns outside production so a dev key cannot stop a service |
 | Compose services | 1 | `docker-compose.yml`: api only |
 
