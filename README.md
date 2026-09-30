@@ -248,7 +248,7 @@ with `scale api=2` would break that limiter's guarantees, which is the
 condition under which Redis would finally be justified.
 
 **CI (GitHub Actions, `.github/workflows/ci.yml`):** lint (ruff, pinned) + a
-**blocking** dependency vulnerability scan (pip-audit) + the 75-case test suite,
+**blocking** dependency vulnerability scan (pip-audit) + the 91-case test suite,
 plus a job that builds the Docker image, a `config-validation` job (compose
 validation + image-availability + cross-file consistency), and the
 `compose-smoke-test` job described above.
@@ -279,7 +279,19 @@ Three changes, made together because each one alone would have been misleading:
    appears nowhere in this codebase, and the Starlette advisories concern
    `StaticFiles`/`FileResponse`, `request.url.hostname`, bare `HTTPEndpoint` and
    urlencoded form limits — also unused.
-3. **CORS can no longer be configured unsafely** (`app/core/cors.py`). The old
+3. **`SECRET_KEY` must be at least 32 bytes in production** (finding S15).
+   Requiring the field — already true here since Day 3 — stops a *missing*
+   secret; this stops a *weak* one, which is the failure that survives a
+   deployment checklist because everything appears to work. HS256 uses the secret
+   directly as an HMAC key and RFC 7518 3.2 requires at least the hash output
+   length; below that, a signature can be brute-forced offline from a single
+   captured token, without ever touching the PBKDF2 password store. Enforced by a
+   `model_validator`: hard failure when `APP_ENV=production`, loud warning
+   otherwise — the same asymmetry as the CORS rule below, so a development key
+   cannot take a running service down. The CI compose-smoke secret was 31
+   characters and is now 37. 16 tests cover it, including one that runs the exact
+   `secrets.token_hex(32)` command the error message recommends.
+4. **CORS can no longer be configured unsafely** (`app/core/cors.py`). The old
    `CORS_ORIGINS="*"` default combined with a hardcoded `allow_credentials=True`;
    in that combination Starlette echoes the caller's `Origin` rather than
    sending `*`, which trusts every website for credentialed cross-origin

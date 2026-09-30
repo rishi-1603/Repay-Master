@@ -124,7 +124,7 @@ jobs:
       # compose requires this to interpolate (`${SECRET_KEY:?...}`);
       # app/core/config.py has no fallback, so the container fails loudly
       # without it. Throwaway value -- not a real credential.
-      SECRET_KEY: ci-smoke-only-not-a-real-secret
+      SECRET_KEY: ci-smoke-only-not-a-real-secret-value
 
     steps:
       - name: Checkout code

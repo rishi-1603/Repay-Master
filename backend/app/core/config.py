@@ -3,9 +3,17 @@
 Day 2: auth/history settings added alongside those endpoints (loan/risk
 calculation needed none of this on Day 1).
 """
+import warnings
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# HS256 signs with the secret as a raw HMAC key. RFC 7518 section 3.2 requires
+# the key to be at least as long as the hash output -- 32 bytes for SHA-256 --
+# and PyJWT warns below that. A short key is not a style problem: it makes the
+# signature brute-forceable offline from any single captured token.
+MIN_SECRET_KEY_BYTES = 32
 
 
 class Settings(BaseSettings):
@@ -43,6 +51,40 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
+    @model_validator(mode="after")
+    def _secret_key_must_be_long_enough(self) -> "Settings":
+        """Refuse to run in production with a signing key short enough to
+        brute-force (finding S15).
+
+        Requiring the field (above) stops a *missing* secret; this stops a *weak*
+        one, which is the failure mode that survives a deployment checklist
+        because everything appears to work. Below the minimum it is a hard
+        failure when APP_ENV=production and a loud warning otherwise -- the same
+        asymmetry as app/core/cors.py, and for the same reason: a rule that fails
+        unconditionally could take a running service down over a development key,
+        which trades a real control for an outage. Production is where the key
+        protects real tokens, so production is where it is enforced.
+
+        Note this project hashes passwords with PBKDF2 rather than relying on a
+        JWT library's defaults, but the *token signing* key is exactly as
+        sensitive: whoever holds it can mint a valid token for any user without
+        touching the password store at all.
+        """
+        length = len(self.SECRET_KEY.encode("utf-8"))
+        if length >= MIN_SECRET_KEY_BYTES:
+            return self
+
+        message = (
+            f"SECRET_KEY is {length} bytes; at least {MIN_SECRET_KEY_BYTES} are required, "
+            "because HS256 uses it directly as an HMAC key (RFC 7518 3.2) and a shorter key "
+            "can be brute-forced offline from any single captured token. Generate one with: "
+            'python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+        if self.APP_ENV.strip().lower() == "production":
+            raise ValueError(f"Refusing to start in production: {message}")
+        warnings.warn(f"Non-production only, and not acceptable in production: {message}", stacklevel=2)
+        return self
 
     # Brute-force mitigation on POST /auth/login (Day 4). Two independent
     # limits, because each alone is trivially evaded:

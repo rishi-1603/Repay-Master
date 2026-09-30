@@ -45,14 +45,15 @@ asserted in CI.
 
 | Claim | Value | Source |
 |---|---|---|
-| pytest cases | 75 | CI `test` job log (54 before the Day-7 CORS tests) |
+| pytest cases | 91 | CI `test` job log (54 before the Day-7 CORS and key-strength tests) |
 | Model | RandomForestClassifier, 200 trees, `random_state=42` | `train_model.py:66` |
 | Test accuracy | 80.0% on 40 held-out rows | `models/metrics.json` + asserted by smoke test |
 | Training rows | 200 (201 lines incl. header) | CSV + `n_rows: 200` |
 | Features | 5, standardized | `utils/risk.py` FEATURE_NAMES + StandardScaler |
 | Password hashing | PBKDF2-HMAC-SHA256, 100k iterations, per-user salt | `utils/auth.py:39` |
-| Coverage (production code) | 98% | CI `--cov=app` with `.coveragerc` omitting `app/tests/`; 334 stmts, 8 missed (97% before the Day-7 CORS module) |
+| Coverage (production code) | 98% | CI `--cov=app` with `.coveragerc` omitting `app/tests/`; 347 stmts, 8 missed (97% before the Day-7 CORS and config modules) |
 | Dependency audit | clean, and blocking | CI `pip-audit --desc` — no `\|\| true`, no `continue-on-error`, no waivers: `No known vulnerabilities found` |
+| Signing-key floor | 32 bytes in production | `app/core/config.py` model validator; warns outside production so a dev key cannot stop a service |
 | Compose services | 1 | `docker-compose.yml`: api only |
 
 ## Interview prep — questions to be ready for
@@ -114,7 +115,7 @@ asserted in CI.
   user through the HTTP API and then logs in through the same `utils/auth.py`
   the Streamlit app uses — but nothing renders the UI. The Docker image serves
   only the FastAPI backend.
-- **Coverage is 98% on production code** (334 statements, 8 missed). Read it
+- **Coverage is 98% on production code** (347 statements, 8 missed). Read it
   with the caveat that this backend is small and mostly deterministic maths plus
   thin routes — a high percentage here is cheaper to earn than in the sibling
   CertiFake, whose 78% covers Kafka consumers and CV code. Do not present the
