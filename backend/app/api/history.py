@@ -15,7 +15,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from utils.auth import delete_scenario, get_saved_scenarios, save_scenario  # noqa: E402
+from utils.auth import (  # noqa: E402
+    delete_scenario,
+    get_saved_scenarios,
+    get_scenario,
+    save_scenario,
+)
 
 from app.core.security import get_current_username  # noqa: E402
 from app.schemas.auth import ScenarioCreate, ScenarioRead  # noqa: E402
@@ -33,11 +38,12 @@ def create_history_entry(
     payload: ScenarioCreate, username: str = Depends(get_current_username)
 ) -> ScenarioRead:
     new_id = save_scenario(username, payload.label, payload.params)
-    # save_scenario only returns the new row's id, not the full record (it's
-    # shared with the Streamlit app, which never needed the full row back)
-    # -- re-fetch to hand the client a complete ScenarioRead, including the
-    # server-assigned id and created_at timestamp it needs for later delete.
-    match = next((row for row in get_saved_scenarios(username) if row["id"] == new_id), None)
+    # save_scenario only returns the new row's id, not the full record (it's shared
+    # with the Streamlit app, which never needed the full row back) -- re-read to hand
+    # the client a complete ScenarioRead, including the server-assigned id and
+    # created_at. Day 7: this used to call get_saved_scenarios() and scan the list in
+    # Python, reading and parsing every scenario the user owned to answer about one.
+    match = get_scenario(new_id, username)
     if match is None:  # pragma: no cover - would only happen on a concurrent delete race
         raise HTTPException(status_code=500, detail="Scenario was saved but could not be re-read.")
     return ScenarioRead(**match)
