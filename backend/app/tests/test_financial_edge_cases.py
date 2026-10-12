@@ -8,9 +8,8 @@ every expected value here is computed independently inside the test — with
 value is genuinely impossible to restate (a floating-point library result), the
 assertion is written to a stated tolerance with the reason.
 
-Three defects found by this audit are pinned with `xfail(strict=True)`:
-D1-7 (non-finite input accepted), D4-2 (INR crashes the PDF report), and the
-unrounded EMI that `calculate_monthly_payment` returns.
+Defects found by this audit: D4-2 (PDF report crash) is fixed and now covered by
+plain tests. D1-7 (non-finite input accepted) is still pinned with `xfail(strict=True)`.
 """
 from datetime import datetime as _dt
 from decimal import Decimal, getcontext
@@ -295,8 +294,6 @@ def test_another_users_scenario_is_not_deletable_and_survives(client):
 # hits the first one in *any* currency.
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True,
-                   reason="D4-2a: two or more recommendations raise in the PDF build (multi_cell cursor not reset)")
 def test_pdf_report_handles_more_than_one_recommendation():
     """`utils/pdf_report.py:52` calls `multi_cell(0, 6, ...)` inside the recommendations
     loop. fpdf2's `multi_cell` defaults to `new_x=RIGHT`, so the cursor's x is left at the
@@ -319,8 +316,6 @@ def test_pdf_report_handles_more_than_one_recommendation():
                       "Look for ways to reduce monthly expenses"])
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="D4-2b: the rupee guard covers only the label and the currency symbol")
 def test_pdf_report_renders_under_inr():
     """`pdf_report.py:8-12` maps `₹` to `Rs. ` for `currency_symbol` and `scenario_label`
     only. Anything else non-latin-1 raises `FPDFUnicodeEncodingException` against core
