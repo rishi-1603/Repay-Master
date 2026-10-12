@@ -5,10 +5,10 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class LoanCalculateRequest(BaseModel):
-    loan_amount: float = Field(gt=0, description="Principal loan amount.")
-    interest_rate: float = Field(gt=0, le=100, description="Annual interest rate, percent (e.g. 8.5).")
-    monthly_income: float = Field(gt=0)
-    monthly_expenses: float = Field(ge=0)
+    loan_amount: float = Field(allow_inf_nan=False, gt=0, description="Principal loan amount.")
+    interest_rate: float = Field(allow_inf_nan=False, gt=0, le=100, description="Annual interest rate, percent (e.g. 8.5).")
+    monthly_income: float = Field(allow_inf_nan=False, gt=0)
+    monthly_expenses: float = Field(allow_inf_nan=False, ge=0)
     start_date: date = Field(default_factory=date.today)
 
     @field_validator("monthly_expenses")
@@ -42,8 +42,8 @@ class LoanCalculateResponse(BaseModel):
 
 class PrepaymentRequest(LoanCalculateRequest):
     months: int = Field(gt=0, le=720, description="Loan tenure in months for the baseline schedule.")
-    extra_monthly: float = Field(default=0, ge=0)
-    lump_sum: float = Field(default=0, ge=0)
+    extra_monthly: float = Field(allow_inf_nan=False, default=0, ge=0)
+    lump_sum: float = Field(allow_inf_nan=False, default=0, ge=0)
     lump_sum_month: int | None = Field(default=None, gt=0)
 
 
