@@ -1,7 +1,7 @@
 # RepayMaster — Days 8–10 final QA report
 
 **Verification date:** 2026-10-12 (Asia/Calcutta / UTC evidence timestamps)  
-**Verified main commit:** `936311dd`  
+**Verified main commit:** `d3b6652b`  
 **Repository:** https://github.com/rishi-1603/Repay-Master
 
 ## Result
@@ -24,7 +24,7 @@ viewer access.
 | Model runtime | **PASS** | API returned a real risk class, five factors, `explanation_is_approximate=false`, and `model_test_accuracy=80.0` |
 | Critical automated tests | **PASS** | **140 parameterized cases**, 98% backend production coverage (347 statements / 7 missed); ruff clean |
 | Security/dependencies | **PASS** | Backend and root requirements audits clean; root Streamlit direct requirements are now exact pins; no tracked secret patterns or real `.env` files |
-| CI/CD | **PASS** | Main run [38230072224](https://github.com/rishi-1603/Repay-Master/actions/runs/38230072224): Streamlit smoke, config validation, test, Docker build, and Compose smoke all passed |
+| CI/CD | **PASS** | Main run [38231642488](https://github.com/rishi-1603/Repay-Master/actions/runs/38231642488): Streamlit smoke, config validation, test, Docker build, and Compose smoke all passed |
 | Container/API deployment | **PASS in CI** | Compose healthcheck, model artifacts, risk prediction, prepayment behavior, history persistence, and named volume verified by CI smoke |
 | Streamlit UI | **PASS locally / UNVERIFIED publicly** | Local Streamlit launched and Playwright exercised the calculation button; the public URL showed a platform auth gate |
 | README/architecture/screenshots | **PASS** | Formula/assumption/rounding section, architecture SVG, calculation-result capture, and public auth-gate capture included |
