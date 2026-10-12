@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">RepayMaster architecture</title>
+  <desc id="desc">The Streamlit UI and FastAPI backend share deterministic finance, risk, authentication and report modules backed by local SQLite and model artifacts.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#52606d"/></marker>
+    <style>
+      .bg{fill:#f7fafc}.box{fill:#fff;stroke:#2d3748;stroke-width:2;rx:12}.core{fill:#edf6ff;stroke:#3182ce;stroke-width:2;rx:12}.model{fill:#fffaf0;stroke:#d69e2e;stroke-width:2;rx:12}.optional{fill:#f0fff4;stroke:#38a169;stroke-width:2;rx:12}.title{font:700 26px system-ui,sans-serif;fill:#1a202c}.head{font:700 16px system-ui,sans-serif;fill:#1a202c}.body{font:14px system-ui,sans-serif;fill:#4a5568}.label{font:12px system-ui,sans-serif;fill:#718096}.line{stroke:#52606d;stroke-width:2;fill:none;marker-end:url(#arrow)}.dash{stroke:#718096;stroke-width:2;stroke-dasharray:7 6;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect class="bg" width="1280" height="720"/>
+  <text class="title" x="50" y="55">RepayMaster — deterministic finance + ML risk</text>
+  <text class="body" x="50" y="82">One shared core powers the standalone Streamlit UI and the independently callable FastAPI API</text>
+
+  <rect class="box" x="55" y="135" width="250" height="150"/>
+  <text class="head" x="80" y="172">Streamlit UI</text><text class="body" x="80" y="200">calculator + charts</text><text class="body" x="80" y="222">amortization / prepayment</text><text class="body" x="80" y="244">PDF + CSV export</text><text class="label" x="80" y="268">optional local account</text>
+  <rect class="box" x="390" y="135" width="250" height="150"/>
+  <text class="head" x="415" y="172">FastAPI backend</text><text class="body" x="415" y="200">/loan/calculate</text><text class="body" x="415" y="222">/loan/prepayment</text><text class="body" x="415" y="244">/risk + /history + auth</text><text class="label" x="415" y="268">JWT + validation + /health</text>
+  <path class="line" d="M305 210 H390"/><text class="label" x="319" y="198">same modules</text>
+
+  <rect class="core" x="715" y="115" width="250" height="190"/>
+  <text class="head" x="740" y="153">Shared application core</text><text class="body" x="740" y="182">utils/finance.py</text><text class="body" x="740" y="204">Decimal EMI + amortization</text><text class="body" x="740" y="226">prepayment simulation</text><text class="body" x="740" y="248">risk.py + auth.py</text><text class="body" x="740" y="270">currency + PDF report</text>
+  <path class="line" d="M640 190 H715"/><path class="line" d="M640 245 H715"/>
+
+  <rect class="model" x="1035" y="115" width="190" height="190"/>
+  <text class="head" x="1060" y="153">Model artifacts</text><text class="body" x="1060" y="182">RandomForest</text><text class="body" x="1060" y="204">StandardScaler</text><text class="body" x="1060" y="226">SHAP TreeExplainer</text><text class="body" x="1060" y="248">metrics.json</text><text class="label" x="1060" y="276">synthetic-data limits</text>
+  <path class="line" d="M965 210 H1035"/>
+
+  <rect class="core" x="390" y="420" width="250" height="125"/>
+  <text class="head" x="415" y="458">SQLite</text><text class="body" x="415" y="486">users</text><text class="body" x="415" y="507">saved_scenarios</text><text class="label" x="415" y="529">named Docker volume</text>
+  <path class="dash" d="M515 285 V420"/><text class="label" x="530" y="355">history/auth</text>
+
+  <rect class="optional" x="715" y="420" width="250" height="125"/>
+  <text class="head" x="740" y="458">Optional Gemini</text><text class="body" x="740" y="486">natural-language strategy</text><text class="body" x="740" y="507">never calculates money</text><text class="label" x="740" y="529">key absent = warning, not crash</text>
+  <path class="dash" d="M840 305 V420"/>
+
+  <rect class="model" x="1035" y="420" width="190" height="125"/>
+  <text class="head" x="1060" y="458">Verification</text><text class="body" x="1060" y="486">140 parameterized cases</text><text class="body" x="1060" y="507">Decimal reference script</text><text class="label" x="1060" y="529">CI image smoke test</text>
+  <path class="dash" d="M965 482 H1035"/>
+
+  <rect class="box" x="55" y="610" width="1170" height="52"/>
+  <text class="body" x="80" y="642">Deployment truth: the FastAPI image is CI-verified; the public Streamlit URL currently presents a platform auth gate, so its full live workflow is UNVERIFIED without viewer access.</text>
+</svg>
