@@ -1,13 +1,57 @@
-"""Core loan-repayment math: EMI, achievements, amortization, prepayment simulation."""
+"""Core loan-repayment math: EMI, achievements, amortization, prepayment simulation.
+
+Money is calculated with :class:`decimal.Decimal` internally and converted to
+floats only at the public/dataframe boundary. This is intentional: the old
+float recurrence could leave a material residual on a valid high-rate,
+long-tenure loan (for example, 99.99% APR over 360 months left 324.76 after
+month 360 and silently added a 361st payment). Display values are rounded to
+cents with ROUND_HALF_UP; unrounded values are retained for EMI and interest
+identities until they are returned to a caller.
+"""
 from datetime import timedelta
+from decimal import ROUND_HALF_UP, Decimal, localcontext
+
 import pandas as pd
+
+_DECIMAL_1200 = Decimal(1200)
+_MONEY_QUANTUM = Decimal("0.01")
+
+
+def _as_decimal(value) -> Decimal:
+    """Convert through ``str`` so a caller's decimal-looking float is not
+    expanded into its binary representation."""
+    return Decimal(str(value))
+
+
+def _monthly_payment_decimal(loan_amount, interest_rate, months) -> Decimal:
+    """Return the EMI at high precision using the standard closed form.
+
+    The reciprocal form is numerically stable for large ``(1 + r) ** n``:
+    ``P*r / (1 - (1+r)**-n)``. Decimal is used so the amortization recurrence
+    and the formula use the same exact inputs.
+    """
+    principal = _as_decimal(loan_amount)
+    month_count = int(months)
+    rate = _as_decimal(interest_rate) / _DECIMAL_1200
+    if rate == 0:
+        return principal / Decimal(month_count)
+
+    with localcontext() as context:
+        # 50 digits is comfortably above the maximum term used by the API and
+        # leaves room for very large principals without introducing a hidden
+        # cents-level truncation in the recurrence.
+        context.prec = 50
+        return principal * rate / (Decimal(1) - (Decimal(1) + rate) ** (-month_count))
+
+
+def _money(value: Decimal) -> float:
+    """Round a displayed schedule amount to cents using financial half-up."""
+    return float(value.quantize(_MONEY_QUANTUM, rounding=ROUND_HALF_UP))
 
 
 def calculate_monthly_payment(loan_amount, interest_rate, months):
-    r = interest_rate / 1200
-    if r == 0:
-        return loan_amount / months
-    return loan_amount * (r * (1 + r) ** months) / ((1 + r) ** months - 1)
+    """Return the unrounded EMI as a float for compatibility with callers."""
+    return float(_monthly_payment_decimal(loan_amount, interest_rate, months))
 
 
 def suggest_repayment_period(loan_amount, monthly_income, monthly_expenses, interest_rate):
@@ -125,52 +169,66 @@ def calculate_achievements(loan_amount, monthly_payment, interest_rate, months):
 
 def build_amortization_schedule(loan_amount, interest_rate, months, start_date,
                                  extra_monthly=0, lump_sum=0, lump_sum_month=None):
-    """Month-by-month amortization schedule, optionally with extra/lump-sum prepayments.
+    """Build a month-by-month schedule with optional prepayments.
 
-    Returns (schedule_df, months_taken, total_interest_paid).
+    The recurrence is Decimal-based and the final scheduled month is an
+    explicit maturity boundary. That boundary is not a cosmetic clamp: it
+    prevents floating-point residue from creating a silent 361st payment on a
+    360-month loan. If an extra payment clears the balance earlier, the schedule
+    ends on that earlier month instead.
+
+    Returns ``(schedule_df, months_taken, total_interest_paid)``. Dataframe
+    money columns are displayed to cents with ROUND_HALF_UP; total interest
+    retains sub-cent precision until the caller chooses its display rounding.
     """
-    monthly_payment = calculate_monthly_payment(loan_amount, interest_rate, months)
-    monthly_rate = interest_rate / 1200
+    monthly_payment = _monthly_payment_decimal(loan_amount, interest_rate, months)
+    monthly_rate = _as_decimal(interest_rate) / _DECIMAL_1200
 
     rows = []
-    balance = loan_amount
+    balance = _as_decimal(loan_amount)
+    extra_monthly_decimal = _as_decimal(extra_monthly)
+    lump_sum_decimal = _as_decimal(lump_sum)
     month = 0
-    total_interest = 0.0
+    total_interest = Decimal(0)
 
-    while balance > 0.01 and month < 720:
+    while balance > Decimal("0.01") and month < 720:
         month += 1
         interest = balance * monthly_rate
         principal = monthly_payment - interest
-        extra = extra_monthly
+        extra = extra_monthly_decimal
         if lump_sum_month and month == int(lump_sum_month):
-            extra += lump_sum
+            extra += lump_sum_decimal
 
-        if principal + extra >= balance:
+        # An explicit maturity check keeps the requested term authoritative in
+        # the face of any residual smaller than a cent OR numerical drift in a
+        # very high-rate/long-tenure recurrence. A genuine prepayment can still
+        # finish before maturity through the second condition.
+        if month >= int(months) or principal + extra >= balance:
             principal = balance
-            extra = 0
+            extra = Decimal(0)
             payment = principal + interest
         else:
             payment = monthly_payment + extra
 
-        balance -= (principal + extra)
+        balance -= principal + extra
         total_interest += interest
 
         rows.append({
             'Month': month,
-            'EMI': round(payment, 2),
-            'Principal': round(principal + extra, 2),
-            'Interest': round(interest, 2),
-            'Balance': round(max(balance, 0), 2),
+            'EMI': _money(payment),
+            'Principal': _money(principal + extra),
+            'Interest': _money(interest),
+            'Balance': _money(max(balance, Decimal(0))),
             'Payment Date': (start_date + timedelta(days=30 * month)).strftime('%Y-%m-%d'),
         })
 
-    return pd.DataFrame(rows), month, total_interest
+    return pd.DataFrame(rows), month, float(total_interest)
 
 
 def simulate_prepayment(loan_amount, interest_rate, months, start_date,
                          extra_monthly=0, lump_sum=0, lump_sum_month=None):
     """Compare baseline vs. prepayment scenario. Returns dict of savings."""
-    baseline_df, baseline_months, baseline_interest = build_amortization_schedule(
+    _baseline_df, baseline_months, baseline_interest = build_amortization_schedule(
         loan_amount, interest_rate, months, start_date)
     new_df, new_months, new_interest = build_amortization_schedule(
         loan_amount, interest_rate, months, start_date,

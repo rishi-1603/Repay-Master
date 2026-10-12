@@ -80,6 +80,54 @@ jobs:
         # keeps the gaps visible in the log rather than hiding behind a total.
         run: pytest app/tests/ -v --cov=app --cov-report=term-missing
 
+      - name: Validate finance against the independent Decimal reference
+        # The backend suite covers the HTTP contract; this second check uses a
+        # 50-digit Decimal closed form and an analytic balance identity so a
+        # duplicated float formula cannot make both the library and its test
+        # agree on the same wrong answer.
+        run: python ../scripts/validate_finance_reference.py
+
+  streamlit-smoke:
+    # The Docker image serves the FastAPI backend, while Streamlit Cloud uses
+    # the root requirements.txt and app.py. Keep that separately deployed
+    # surface in CI too: install its exact pins, audit them, and prove the app
+    # can start and answer Streamlit's health endpoint.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Streamlit application dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Audit Streamlit application dependencies
+        run: |
+          pip install -q pip-audit
+          pip-audit -r requirements.txt --desc
+
+      - name: Start Streamlit and verify its health endpoint
+        run: |
+          nohup streamlit run app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --browser.gatherUsageStats false > streamlit.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8501/_stcore/health; then
+              echo
+              echo "Streamlit health check passed"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Streamlit never became ready"
+          cat streamlit.log
+          exit 1
+
   docker-build:
     # Verifies the Dockerfile at the repo root actually builds -- this
     # project's Dockerfile could not be built or run in the sandbox this

@@ -8,8 +8,10 @@ every expected value here is computed independently inside the test — with
 value is genuinely impossible to restate (a floating-point library result), the
 assertion is written to a stated tolerance with the reason.
 
-Defects found by this audit: D4-2 (PDF report crash) is fixed and now covered by
-plain tests. D1-7 (non-finite input accepted) is still pinned with `xfail(strict=True)`.
+Defects found by this audit: D4-2 (PDF report crash) and D1-7 (non-finite
+input accepted) are fixed and covered by plain regression tests. The schedule
+also has a high-rate maturity regression below: Decimal recurrence + an
+explicit final-term boundary prevent a numerically induced extra payment.
 """
 from datetime import datetime as _dt
 from decimal import Decimal, getcontext
@@ -105,6 +107,26 @@ def test_amortisation_rows_are_monotonic_in_principal():
     schedule, _, _ = build_amortization_schedule(800000, 10.0, 48, start_date=_dt(2026, 1, 1))
     principals = [Decimal(str(v)) for v in schedule["Principal"]]
     assert principals == sorted(principals), "principal repaid should never decrease"
+
+
+def test_high_rate_long_term_schedule_does_not_add_a_hidden_extra_payment():
+    """A valid high-rate loan must finish at its requested maturity.
+
+    With the former float recurrence, 99.99% APR over 360 months left a
+    324.76 balance after the nominal 360th payment and returned 361 rows. That
+    silently changed both the term and the total interest. The Decimal
+    recurrence is compared with the independent Decimal EMI identity here.
+    """
+    principal, rate, months = 750000, 99.99, 360
+    schedule, months_taken, total_interest = build_amortization_schedule(
+        principal, rate, months, start_date=_dt(2026, 1, 1)
+    )
+    expected_interest = emi_exact(principal, rate, months) * Decimal(months) - Decimal(principal)
+    assert months_taken == months
+    assert len(schedule) == months
+    assert close(schedule["Balance"].iloc[-1], Decimal("0"), tol=Decimal("0.01"))
+    assert close(total_interest, expected_interest, tol=Decimal("0.05")), \
+        f"interest {total_interest} vs independent reference {expected_interest}"
 
 
 @pytest.mark.parametrize("amount", ["0.01", "99.99", "100000.55", "1000000.01"])

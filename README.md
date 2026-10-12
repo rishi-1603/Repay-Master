@@ -30,6 +30,47 @@ personalized repayment strategies with Gemini.
 - **AI-Powered Recommendations** — Gemini-generated repayment strategy advice.
 - **PDF report export** of the full analysis.
 
+## Financial model, assumptions and rounding
+
+RepayMaster uses deterministic fixed-rate amortization; Gemini never calculates
+money. For principal `P`, annual percentage rate `a`, monthly rate
+`r = a / 1200`, and tenure `n` months, the unrounded EMI is:
+
+```text
+EMI = P × r × (1 + r)^n / ((1 + r)^n − 1)
+```
+
+The zero-interest branch is `EMI = P / n`. The amortization recurrence for each
+month is `interest = balance × r`, `principal = payment − interest`, and
+`balance = balance − principal`. Extra monthly payments and lump sums reduce
+principal in the month they are applied; the schedule ends early when the
+balance reaches zero. A maturity boundary prevents numerical residue from
+silently creating an extra payment after the requested term.
+
+Implementation assumptions are explicit: the rate is nominal annual percent
+compounded monthly; fees, taxes, penalties, grace periods and lender-specific
+prepayment rules are not modelled; payment dates are represented as
+`start_date + 30 days × month` for a stable timeline rather than calendar-aware
+billing; and the result is an estimate, not financial advice.
+
+`utils/finance.py` calculates with `Decimal` internally. EMI and total interest
+retain sub-cent precision until the API/UI edge; displayed schedule amounts and
+API response fields are rounded to two decimals using financial half-up rounding.
+This avoids the high-rate float failure found in the Day-8 audit (99.99% APR over
+360 months previously left a 324.76 residual and produced a hidden 361st row).
+The independent reference check is reproducible with:
+
+```bash
+python scripts/validate_finance_reference.py
+```
+
+One independently verified example (`P=250,000`, `a=8.5%`, `n=60`) gives an
+unrounded EMI of about `5,129.13283176`, total interest about `57,747.97`, and
+total repayment about `307,747.97`. Adding `5,000` per month reduces the
+observed schedule to 28 months and about `25,767.20` interest; the reference
+script checks the same result with 50-digit Decimal arithmetic and an analytic
+balance identity.
+
 ## Getting started
 
 ```bash
@@ -38,6 +79,16 @@ streamlit run app.py
 ```
 
 The app opens at `http://localhost:8501`.
+
+### Deployment verification (Day 10)
+
+A Streamlit Cloud URL is listed in the repository metadata:
+https://repay-master-kwuphbmhsmnzb9g5eeetvd.streamlit.app/. The URL resolves,
+but the Day-10 browser check presented Streamlit's platform authentication gate
+rather than the application, so the full public calculation workflow is
+**UNVERIFIED without viewer access**. The local dashboard and calculation flow
+were exercised with Playwright; the FastAPI backend and model artifacts were
+also exercised in the CI Compose smoke run. No public backend URL is claimed.
 
 ### Enabling AI recommendations
 Create `.streamlit/secrets.toml` (gitignored) with:
@@ -88,13 +139,19 @@ Repay-Master/
         └── tests/
 ```
 
+**Diagram:** [verified architecture SVG](docs/architecture.svg) · **Screenshots:**
+[initial dashboard](docs/screenshots/repaymaster-local-dashboard.png) ·
+[calculation results](docs/screenshots/repaymaster-calculation-results.png) ·
+[live deployment auth gate](docs/screenshots/repaymaster-live-auth-gate.png)
+
 ## Backend API
 
 A FastAPI backend under `backend/` wraps the existing deterministic finance
 math (`utils/finance.py`) and the ML risk model (`utils/risk.py`) as
 independently callable, tested HTTP endpoints, so this logic is no longer only
-reachable from inside the Streamlit process. It is implemented, tested (54
-pytest cases) and — since Day 6 — verified running inside its own container.
+reachable from inside the Streamlit process. It is implemented, tested (140
+parameterized pytest cases in the current source tree) and — since Day 6 —
+verified running inside its own container.
 
 **Currently implemented and tested:**
 - `POST /loan/calculate` — EMI/repayment-option calculation (Short/Recommended/Long term)
@@ -248,10 +305,11 @@ with `scale api=2` would break that limiter's guarantees, which is the
 condition under which Redis would finally be justified.
 
 **CI (GitHub Actions, `.github/workflows/ci.yml`):** lint (ruff, pinned) + a
-**blocking** dependency vulnerability scan (pip-audit) + the 91-case test suite,
-plus a job that builds the Docker image, a `config-validation` job (compose
-validation + image-availability + cross-file consistency), and the
-`compose-smoke-test` job described above.
+**blocking** dependency vulnerability scan (pip-audit) + the current
+parameterized test suite (140 cases after the Day-8 finance regression test),
+plus a Streamlit dependency/startup smoke job, a job that builds the Docker
+image, a `config-validation` job (compose validation + image-availability +
+cross-file consistency), and the `compose-smoke-test` job described above.
 
 ### Security posture (Day-7 remediation)
 
@@ -317,6 +375,6 @@ Three changes, made together because each one alone would have been misleading:
   analytics
 - Airflow DAG for scheduled batch risk scoring
 
-The Streamlit app (`app.py`) is unchanged and still works standalone; it does
-
-not yet call this API internally.
+The Streamlit app (`app.py`) still works standalone and now shares the
+Decimal-hardened finance core described above; it does not yet call this API
+internally.
