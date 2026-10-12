@@ -26,3 +26,10 @@ PyJWT==2.15.1
 pytest==9.1.1
 pytest-cov==7.1.0
 httpx==0.28.1
+
+# PDF report generation (utils/pdf_report.py, imported by the API tests). Was
+# missing here: it lived only in the root requirements.txt, so backend-only
+# installs (and the CI test job, which installs this file) failed with
+# ModuleNotFoundError: No module named 'fpdf'. Pinned to the version the
+# suite was run against.
+fpdf2==2.8.9

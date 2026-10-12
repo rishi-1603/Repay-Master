@@ -2,6 +2,16 @@
 from fpdf import FPDF
 
 
+def _latin1(text) -> str:
+    """Make text safe for fpdf2's built-in latin-1 core fonts.
+
+    ₹ becomes "Rs. " (readable in INR reports); any other character outside
+    latin-1 (e.g. emoji or € from a user-typed scenario label) becomes "?"
+    instead of raising FPDFUnicodeEncodingException. (D4-2b)
+    """
+    return str(text).replace("₹", "Rs. ").encode("latin-1", "replace").decode("latin-1")
+
+
 def build_report_pdf(scenario_label, currency_symbol, loan_amount, interest_rate,
                       monthly_income, monthly_expenses, options: dict, risk_label,
                       recommendations: list) -> bytes:
@@ -9,7 +19,8 @@ def build_report_pdf(scenario_label, currency_symbol, loan_amount, interest_rate
     # glyph can't be rendered directly -- fall back to "Rs." in the PDF only.
     if currency_symbol == "₹":
         currency_symbol = "Rs. "
-    scenario_label = scenario_label.replace("₹", "Rs. ")
+    currency_symbol = _latin1(currency_symbol)
+    scenario_label = _latin1(scenario_label)
 
     pdf = FPDF()
     pdf.add_page()
@@ -49,6 +60,8 @@ def build_report_pdf(scenario_label, currency_symbol, loan_amount, interest_rate
         pdf.cell(0, 8, "Recommendations", new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "", 10)
         for rec in recommendations:
-            pdf.multi_cell(0, 6, f"- {rec}")
+            # new_x/new_y: without them the cursor stays at the right margin and the
+            # next call has no width left to render into. (D4-2a)
+            pdf.multi_cell(0, 6, _latin1(f"- {rec}"), new_x="LMARGIN", new_y="NEXT")
 
     return bytes(pdf.output())
