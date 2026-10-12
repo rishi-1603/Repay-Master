@@ -219,7 +219,6 @@ def test_huge_amount_is_either_handled_or_refused_but_never_silently_wrong(clien
             assert opt["monthly_payment"] == opt["monthly_payment"], "NaN returned"
 
 
-@pytest.mark.xfail(strict=True, reason="D1-7: non-finite input is accepted with null outputs")
 def test_non_finite_amount_is_rejected(client):
     """`{"loan_amount": Infinity}` currently returns 200 with `null` numbers — a
     'successful' response containing nothing. JSON has no Infinity literal, so a
