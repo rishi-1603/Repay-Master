@@ -407,12 +407,15 @@ uvicorn app.main:app --reload
 - `POST /webhooks/payments`: signed webhook. Header `X-Webhook-Signature: t=<unix>,v1=<hmac>`,
   where the HMAC is SHA-256 over `"<t>." + raw body`, keyed with `PAYMENT_WEBHOOK_SECRET`.
   Timestamps older than 300 seconds are rejected. Events are deduplicated by `id`.
-- `POST /reconciliation/run` and `GET /ledger/trial-balance`: operations only (`ADMIN_USERNAMES`).
+- `POST /reconciliation/run` and `GET /ledger/trial-balance`: operations only (role `ops`, see below).
 
 **Guarantees, each covered by tests**
 - Every journal entry balances (debits equal credits), and the trial balance is zero.
 - Redelivered webhooks and retried intents never move money twice.
-- Overpayments are refused, not absorbed. A receipt that cannot be applied is parked in suspense.
+- Overpayments are accepted, not refused. The waterfall takes fees, then interest, then principal, up to
+  what is owed. The excess is kept for the customer (`customer_credit`, shown on the payment as
+  `overpayment_credit`). Reversing the payment returns both the loan balances and the credit.
+- A receipt that cannot be applied at all (for example, a success for a failed payment) is parked in suspense.
 - Reversals restore loan balances and net the clearing account to zero.
 - Reconciliation reports missing settlements, unposted receipts, amount mismatches,
   duplicate settlement rows, and reversals not reflected on either side.
@@ -423,14 +426,35 @@ uvicorn app.main:app --reload
 - `python -m app.worker` (or `POST /ops/webhooks/drain`, operations only) processes the
   inbox. Transient failures retry with exponential backoff (up to 5 attempts). Malformed
   or permanently failing events go to `DEAD` and stay visible at `GET /ops/webhooks?status_filter=dead`.
+  After a human has fixed the cause, `POST /ops/webhooks/{event_id}/requeue` (admin) puts a dead event back.
 - Many workers can run at once. On PostgreSQL, `SKIP LOCKED` and row locks keep each event
   applied exactly once. A test runs concurrent workers to check this.
 
-**Operations** (admin only, via `ADMIN_USERNAMES`)
+**Operations and roles**
+- Roles are stored in the database (`role_grants`) and checked on every request, so a revoke
+  takes effect on the next call. The token does not carry roles.
+  - `ops`: drain the inbox, read the inbox, run reconciliation, read the trial balance and integrity report.
+  - `admin`: everything `ops` can do, plus requeue dead events and grant or revoke roles. `admin` implies `ops`.
+  - Customers hold no role and can reach only the loans they own.
+- Bootstrap the first admin from a shell inside the API container (or with `DATABASE_URL` set):
+  `python -m app.cli grant-role <username> admin`. Revoke with `python -m app.cli revoke-role <username> <role>`.
+  Later grants can be made over the API with `POST /admin/roles` (admin only).
 - `POST /reconciliation/run` stores a reconciliation report; `GET /reconciliation/runs/{id}` reads it back.
-- `GET /ledger/integrity` checks that the books agree with payments and loans: trial balance,
-  each payment's entries matching its status, and each loan's principal reconciling.
+- `GET /ledger/integrity` checks that the books agree with the payments and loans they describe:
+  - every journal entry balances, and the trial balance is zero;
+  - each payment's entries match its status, and a reversal nets the original to zero;
+  - for each successful payment, the amount posted to each account (clearing, principal, interest,
+    fee, customer credit) equals what the payment applied;
+  - for each loan, principal, interest and fees reconcile: original minus applied equals the balance.
 - `GET /ledger/trial-balance` shows account balances.
+
+**Deployment (docker compose)**
+- Services: `postgres` (17), `migrate` (runs `alembic upgrade head` once and exits), `api`, and `worker`
+  (`python -m app.worker`). `api` and `worker` start only after migrations succeed.
+- Required in `.env`: `SECRET_KEY`, `POSTGRES_PASSWORD`. Set `PAYMENT_WEBHOOK_SECRET` to accept webhooks.
+  Use a URL-safe password: it is embedded in `DATABASE_URL`.
+- Scale workers with `docker compose up -d --scale worker=3`. Row locks keep each event applied once on PostgreSQL.
+- Users and saved scenarios stay in sqlite under the `repaymaster_data` volume.
 
 **Testing**
 - `pytest app/tests/` runs on SQLite by default.

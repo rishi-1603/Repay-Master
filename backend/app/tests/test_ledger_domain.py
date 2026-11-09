@@ -14,7 +14,6 @@ from app.domain.ledger import (
 from app.domain.money import to_major_str, to_minor
 from app.domain.payments import (
     InvalidTransition,
-    Overpayment,
     PaymentState,
     allocate,
     sign_payload,
@@ -63,13 +62,21 @@ def test_repayment_allocation_must_add_up():
 
 
 def test_waterfall_pays_fees_then_interest_then_principal():
-    assert allocate(100000, fees_due=50000, interest_due=30000, principal_outstanding=500000) == (50000, 30000, 20000)
-    assert allocate(20000, fees_due=50000, interest_due=30000, principal_outstanding=500000) == (20000, 0, 0)
+    assert allocate(100000, fees_due=50000, interest_due=30000, principal_outstanding=500000) == (50000, 30000, 20000, 0)
+    assert allocate(20000, fees_due=50000, interest_due=30000, principal_outstanding=500000) == (20000, 0, 0, 0)
 
 
-def test_overpayment_is_refused_not_absorbed():
-    with pytest.raises(Overpayment):
-        allocate(100, fees_due=0, interest_due=0, principal_outstanding=99)
+def test_overpayment_is_applied_up_to_the_amount_owed_and_the_excess_is_credit():
+    # owed 100 (fee 10, interest 20, principal 70); paying 130 clears the loan and credits 30
+    assert allocate(13000, fees_due=1000, interest_due=2000, principal_outstanding=7000) == (1000, 2000, 7000, 3000)
+
+
+def test_repayment_with_overpayment_credit_posts_to_customer_credit_and_balances():
+    lines = repayment_lines(total=13000, principal=7000, interest=2000, fee=1000, credit=3000)
+    assert trial_balance_is_zero(lines)
+    assert signed_balance("customer_credit", lines) == 3000
+    with pytest.raises(UnbalancedEntry):
+        repayment_lines(total=13000, principal=7000, interest=2000, fee=1000, credit=2000)
 
 
 def test_payment_state_machine_allows_only_defined_moves():

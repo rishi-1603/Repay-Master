@@ -137,7 +137,7 @@ jobs:
           alembic upgrade head
 
       - name: Ledger, payments and worker tests on PostgreSQL
-        run: pytest app/tests/test_payments_api.py app/tests/test_ledger_domain.py -v
+        run: pytest app/tests/test_payments_api.py app/tests/test_ledger_domain.py app/tests/test_rbac.py -v
 
   streamlit-smoke:
     # The Docker image serves the FastAPI backend, while Streamlit Cloud uses
@@ -261,6 +261,10 @@ jobs:
       # app/core/config.py has no fallback, so the container fails loudly
       # without it. Throwaway value -- not a real credential.
       SECRET_KEY: ci-smoke-only-not-a-real-secret-value
+      # Throwaway values. POSTGRES_PASSWORD is required by compose; the webhook secret lets
+      # scripts/compose_smoke_test.sh sign a webhook that the worker container must apply.
+      POSTGRES_PASSWORD: ci-smoke-only-password
+      PAYMENT_WEBHOOK_SECRET: ci-smoke-only-webhook-secret-0123456789
 
     steps:
       - name: Checkout code
@@ -317,6 +321,7 @@ jobs:
         # is irrelevant here because nothing is started, only parsed.
         env:
           SECRET_KEY: ci-validation-only-not-a-real-secret
+          POSTGRES_PASSWORD: ci-validation-only-password
         run: |
           docker compose version
           docker compose config --quiet

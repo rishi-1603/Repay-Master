@@ -34,32 +34,69 @@
 # the sibling CertiFake project's stack being broken for 17 days by MinIO
 # deleting its images from Docker Hub on 2026-09-11.
 #
-# Only one service: this API has no Postgres/Redis/Kafka dependency (see
-# README -- those are explicitly NOT added because nothing here needs
-# them yet, not because they were forgotten). That is also why the
-# in-process rate limiter added on Day 4 is safe here and would not be in a
-# multi-replica deployment.
+# Stack (Day 3-4 operations work):
+#   postgres  the ledger, payments, webhook inbox and reconciliation database.
+#   migrate   one-shot: applies the Alembic migrations, then exits. api and worker wait for it.
+#   api       FastAPI. Accepts signed webhooks into the inbox and serves loans and operations.
+#   worker    drains the webhook inbox (python -m app.worker). Run as many replicas as needed:
+#             claims use row locks, so an event is applied once.
+# Users and saved scenarios stay in sqlite under the repaymaster_data volume (utils/auth.py).
+# The in-process rate limiter is per replica, so scale api horizontally only behind a shared limiter.
 services:
+  postgres:
+    image: postgres:17
+    container_name: repaymaster_postgres
+    environment:
+      POSTGRES_DB: repaymaster
+      POSTGRES_USER: rm
+      # Required: the stack refuses to start without a password. See backend/.env.example.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in a .env file -- see backend/.env.example}
+    volumes:
+      - repaymaster_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rm -d repaymaster"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    container_name: repaymaster_migrate
+    # `python -m` puts the working directory on sys.path, so `app` imports inside env.py.
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment: &app-env
+      APP_ENV: development
+      DEBUG: "true"
+      CORS_ORIGINS: "*"
+      # Required -- app/core/config.py has no fallback, so the containers fail loudly without it.
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in a .env file -- see backend/.env.example}
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      DATABASE_URL: postgresql+psycopg://rm:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in a .env file}@postgres:5432/repaymaster
+      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build: .
     container_name: repaymaster_api
     ports:
       - "8010:8010"
     environment:
+      <<: *app-env
       APP_NAME: RepayMaster API
-      APP_ENV: development
-      DEBUG: "true"
-      CORS_ORIGINS: "*"
-      # Required -- app/core/config.py has no fallback, so the container
-      # will fail to start (loudly) without this set. Set it in a real
-      # .env file; see backend/.env.example.
-      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in a .env file -- see backend/.env.example}
-      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
     volumes:
       # Persists the sqlite user/scenario DB (utils/auth.py) across
       # container restarts and recreations -- without this, `docker
       # compose down` would silently delete every registered user.
       - repaymaster_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     # Python, not curl: the Dockerfile installs no apt packages at all on
     # python:3.12-slim-trixie, so curl/wget/nc are absent. GET /health exists
     # in backend/app/main.py and the container listens on 8010.
@@ -77,5 +114,21 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  worker:
+    build: .
+    container_name: repaymaster_worker
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *app-env
+      WORKER_POLL_SECONDS: "2"
+      WORKER_BATCH_SIZE: "50"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
 volumes:
   repaymaster_data:
+  repaymaster_pg:

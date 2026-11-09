@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.core.security import create_access_token
 from app.db.base import Base, get_db, get_engine, get_session_factory
-from app.db.models import JournalEntry, LoanAccount, Payment, WebhookEvent
+from app.db.models import JournalEntry, LoanAccount, Payment, RoleGrant, WebhookEvent
 from app.domain.payments import sign_payload
 from app.main import app
 from app.services import payments as payments_service
@@ -43,7 +43,9 @@ def db_factory(tmp_path, monkeypatch):
     monkeypatch.setitem(app.dependency_overrides, get_db, _get_db)
     monkeypatch.setitem(app.dependency_overrides, get_session_factory, lambda: factory)
     monkeypatch.setattr(settings, "PAYMENT_WEBHOOK_SECRET", SECRET)
-    monkeypatch.setattr(settings, "ADMIN_USERNAMES", "ops")
+    with factory() as s:
+        s.add(RoleGrant(username="ops", role="ops"))   # operations role lives in the database now
+        s.commit()
     yield factory
     app.dependency_overrides.pop(get_db, None)
     app.dependency_overrides.pop(get_session_factory, None)
@@ -114,8 +116,9 @@ def test_payment_intent_is_idempotent_and_conflicts_on_changed_amount(client):
     assert new_payment(client, 60).status_code == 409
 
 
-def test_overpayment_at_intent_time_is_422(client):
-    assert new_payment(client, 106.01, key="key-over-0001").status_code == 422
+def test_overpayment_is_accepted_at_intent_time(client):
+    resp = new_payment(client, 106.01, key="key-over-0001")
+    assert resp.status_code == 201 and resp.json()["state"] == "PENDING"
 
 
 def test_webhook_refuses_unsigned_bad_and_unconfigured_requests(client, monkeypatch):
@@ -358,3 +361,120 @@ def test_worker_loop_drains_the_inbox_and_stops_when_asked(client, db_factory):
     send_webhook(client, "evt-worker", "payment.succeeded", {"reference": ref, "provider_reference": "P1"})
     worker.run_forever(poll_seconds=0, batch_size=10, max_loops=2, factory=db_factory)
     assert client.get("/loans/LN-1001", headers=auth("alice")).json()["principal_outstanding"] == "46.00"
+
+
+# ---------------------------------------------------------------- overpayments
+
+def _accept_and_settle(client, amount, key, event_id):
+    ref = new_payment(client, amount, key=key).json()["reference"]
+    webhook(client, event_id, "payment.succeeded", {"reference": ref, "provider_reference": f"P-{event_id}"})
+    return ref
+
+
+def test_overpayment_clears_the_loan_and_keeps_the_excess_as_customer_credit(client):
+    # owed 106.00 (fee 1, interest 5, principal 100); paying 110.00 leaves 4.00 credit
+    ref = _accept_and_settle(client, 110, "key-over-0002", "evt-over")
+    body = client.get("/loans/LN-1001", headers=auth("alice")).json()
+    assert body["total_owed"] == "0.00" and body["principal_outstanding"] == "0.00"
+    payment = client.get("/loans/LN-1001", headers=auth("alice")).json()["payments"][0]
+    assert payment["reference"] == ref and payment["state"] == "SUCCESSFUL"
+    assert payment["overpayment_credit"] == "4.00"
+    assert payment["applied"] == {"fee": "1.00", "interest": "5.00", "principal": "100.00"}
+    accounts = trial(client)["accounts"]
+    assert accounts["customer_credit"] == "4.00" and accounts["payment_clearing"] == "110.00"
+    assert client.get("/ledger/integrity", headers=auth("ops")).json()["ok"] is True
+
+
+def test_reversing_an_overpayment_returns_both_the_loan_and_the_credit(client):
+    ref = _accept_and_settle(client, 110, "key-over-0003", "evt-over2")
+    webhook(client, "evt-over2-rev", "payment.reversed", {"reference": ref})
+    body = client.get("/loans/LN-1001", headers=auth("alice")).json()
+    assert body["total_owed"] == "106.00"
+    assert trial(client)["accounts"]["customer_credit"] == "0.00"
+    assert client.get("/ledger/integrity", headers=auth("ops")).json()["ok"] is True
+
+
+def test_partial_payment_has_no_credit(client):
+    _accept_and_settle(client, 50, "key-part-0001", "evt-part")
+    payment = client.get("/loans/LN-1001", headers=auth("alice")).json()["payments"][0]
+    assert payment["overpayment_credit"] == "0.00"
+
+
+# ---------------------------------------------------------------- full integrity
+
+def _integrity_kinds(client):
+    return {i["type"]: i for i in client.get("/ledger/integrity", headers=auth("ops")).json()["issues"]}
+
+
+def test_integrity_detects_tampered_interest_balance(client, db_factory):
+    _accept_and_settle(client, 60, "key-int-0001", "evt-int")
+    with db_factory() as s:
+        s.get(LoanAccount, "LN-1001").interest_due += 1
+        s.commit()
+    issues = _integrity_kinds(client)
+    assert set(issues) == {"LOAN_BALANCE_MISMATCH"} and "interest" in issues["LOAN_BALANCE_MISMATCH"]["detail"]
+
+
+def test_integrity_detects_tampered_fee_balance(client, db_factory):
+    _accept_and_settle(client, 60, "key-fee-0001", "evt-fee")
+    with db_factory() as s:
+        s.get(LoanAccount, "LN-1001").fees_due += 1
+        s.commit()
+    issues = _integrity_kinds(client)
+    assert set(issues) == {"LOAN_BALANCE_MISMATCH"} and "fees" in issues["LOAN_BALANCE_MISMATCH"]["detail"]
+
+
+def test_integrity_detects_a_posting_that_disagrees_with_the_applied_allocation(client, db_factory):
+    _accept_and_settle(client, 60, "key-alloc-001", "evt-alloc")
+    with db_factory() as s:
+        entry = s.scalar(select(JournalEntry).where(JournalEntry.idempotency_key.like("payment:%:success")))
+        interest_line = next(ln for ln in entry.lines if ln.account == "interest_income")
+        # move 1.00 from interest to principal, keeping the entry balanced
+        interest_line.amount -= 100
+        principal_line = next(ln for ln in entry.lines if ln.account == "loan_receivable")
+        principal_line.amount += 100
+        s.commit()
+    kinds = _integrity_kinds(client)
+    assert "ALLOCATION_MISMATCH" in kinds
+    assert "ENTRY_UNBALANCED" not in kinds and "TRIAL_BALANCE_NOT_ZERO" not in kinds
+
+
+def test_integrity_detects_an_unbalanced_entry(client, db_factory):
+    _accept_and_settle(client, 60, "key-unb-0001", "evt-unb")
+    with db_factory() as s:
+        entry = s.scalar(select(JournalEntry).where(JournalEntry.idempotency_key.like("payment:%:success")))
+        next(ln for ln in entry.lines if ln.account == "fee_income").amount += 7
+        s.commit()
+    kinds = _integrity_kinds(client)
+    assert "ENTRY_UNBALANCED" in kinds and "TRIAL_BALANCE_NOT_ZERO" in kinds
+
+
+def test_integrity_detects_credit_that_was_recorded_but_not_posted(client, db_factory):
+    _accept_and_settle(client, 110, "key-cred-001", "evt-cred")
+    with db_factory() as s:
+        payment = s.scalar(select(Payment).where(Payment.state == "SUCCESSFUL"))
+        payment.credit_applied += 100          # the record claims more credit than the ledger holds
+        s.commit()
+    kinds = _integrity_kinds(client)
+    assert "ALLOCATION_MISMATCH" in kinds and "AMOUNT_NOT_ALLOCATED" in kinds
+
+
+def test_integrity_detects_a_reversal_that_does_not_net_to_zero(client, db_factory):
+    ref = _accept_and_settle(client, 60, "key-rnet-001", "evt-rnet")
+    webhook(client, "evt-rnet-rev", "payment.reversed", {"reference": ref})
+    assert _integrity_kinds(client) == {}
+    with db_factory() as s:
+        reversal = s.scalar(select(JournalEntry).where(JournalEntry.idempotency_key.like("payment:%:reversal")))
+        for ln in reversal.lines:              # double every line: still balanced, but no longer nets to zero
+            ln.amount *= 2
+        s.commit()
+    kinds = _integrity_kinds(client)
+    assert "REVERSAL_NOT_NETTED" in kinds and "ENTRY_UNBALANCED" not in kinds
+
+
+def test_integrity_flags_applied_amounts_on_a_payment_that_never_succeeded(client, db_factory):
+    ref = new_payment(client, 20, key="key-pend-0001").json()["reference"]
+    with db_factory() as s:
+        s.scalar(select(Payment).where(Payment.reference == ref)).principal_applied = 5
+        s.commit()
+    assert "APPLIED_WITHOUT_SUCCESS" in _integrity_kinds(client)

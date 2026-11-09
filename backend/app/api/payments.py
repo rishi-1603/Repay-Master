@@ -3,14 +3,17 @@
 Auth:
   * loan and payment endpoints: JWT bearer; a user sees only loans they own.
   * /webhooks/payments: no JWT. Authenticated by HMAC signature with a replay window.
-  * /ops/* , /reconciliation/*, /ledger/*: operations only (ADMIN_USERNAMES) -> 403 otherwise.
+  * /ops/*, /reconciliation/*, /ledger/*: role `ops` (admin implies ops) -> 403 otherwise.
+  * /ops/webhooks/{event_id}/requeue and /admin/roles/*: role `admin` -> 403 otherwise.
+    Roles are granted with `python -m app.cli grant-role`, and checked per request.
 """
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -18,15 +21,17 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from app.core.authz import require_role  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.core.security import get_current_username  # noqa: E402
 from app.db.base import get_db, get_session_factory  # noqa: E402
 from app.db.models import JournalEntry, LoanAccount, Payment, ReconciliationRun, WebhookEvent  # noqa: E402
 from app.domain.ledger import ACCOUNTS, signed_balance, trial_balance_is_zero  # noqa: E402
 from app.domain.money import to_major_str, to_minor  # noqa: E402
-from app.domain.payments import InvalidTransition, Overpayment, verify_signature  # noqa: E402
+from app.domain.payments import InvalidTransition, verify_signature  # noqa: E402
+from app.schemas.admin import RoleGrantRequest  # noqa: E402
 from app.schemas.payments import LoanCreate, PaymentCreate, ReconRequest  # noqa: E402
-from app.services import ledger_service  # noqa: E402
+from app.services import ledger_service, roles  # noqa: E402
 from app.services.ledger_checks import ledger_integrity, persist_reconciliation, run_view  # noqa: E402
 from app.services.payments import (  # noqa: E402
     IdempotencyConflict,
@@ -40,16 +45,8 @@ from app.services.payments import (  # noqa: E402
 )
 
 router = APIRouter(tags=["payments"])
-
-
-def _admins() -> set[str]:
-    return {u.strip() for u in settings.ADMIN_USERNAMES.split(",") if u.strip()}
-
-
-def require_admin(username: str = Depends(get_current_username)) -> str:
-    if username not in _admins():
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="operations access required")
-    return username
+require_ops = require_role("ops")
+require_admin = require_role("admin")
 
 
 def _loan_view(loan: LoanAccount) -> dict:
@@ -72,6 +69,7 @@ def _payment_view(p: Payment) -> dict:
         "provider_reference": p.provider_reference,
         "applied": {"fee": to_major_str(p.fee_applied), "interest": to_major_str(p.interest_applied),
                     "principal": to_major_str(p.principal_applied)},
+        "overpayment_credit": to_major_str(p.credit_applied),
     }
 
 
@@ -94,9 +92,10 @@ def create_loan(payload: LoanCreate, username: str = Depends(get_current_usernam
         principal = to_minor(payload.principal_outstanding)
         if principal <= 0:
             raise ValueError("principal must be positive")
+        interest, fees = to_minor(payload.interest_due), to_minor(payload.fees_due)
         loan = LoanAccount(id=payload.loan_id, owner=username, principal_original=principal,
-                           principal_outstanding=principal,
-                           interest_due=to_minor(payload.interest_due), fees_due=to_minor(payload.fees_due))
+                           principal_outstanding=principal, interest_original=interest, fees_original=fees,
+                           interest_due=interest, fees_due=fees)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     db.add(loan)
@@ -122,7 +121,7 @@ def create_payment(loan_id: str, payload: PaymentCreate, username: str = Depends
         loan = get_owned_loan(db, loan_id, username)
         payment, _created = create_intent(db, loan, to_minor(payload.amount), payload.idempotency_key)
         db.commit()
-    except (NotFound, IdempotencyConflict, Overpayment, ValueError) as exc:
+    except (NotFound, IdempotencyConflict, ValueError) as exc:
         db.rollback()
         raise _domain_error(exc)
     return _payment_view(payment)
@@ -167,7 +166,7 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)) -> di
 
 
 @router.post("/ops/webhooks/drain")
-def drain_webhooks(limit: int = 50, username: str = Depends(require_admin),
+def drain_webhooks(limit: int = 50, username: str = Depends(require_ops),
                    factory: sessionmaker = Depends(get_session_factory)) -> dict:
     if not 1 <= limit <= 500:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
@@ -175,7 +174,7 @@ def drain_webhooks(limit: int = 50, username: str = Depends(require_admin),
 
 
 @router.get("/ops/webhooks")
-def list_webhooks(status_filter: str | None = None, username: str = Depends(require_admin),
+def list_webhooks(status_filter: str | None = None, username: str = Depends(require_ops),
                   db: Session = Depends(get_db)) -> list[dict]:
     query = select(WebhookEvent).order_by(WebhookEvent.id).limit(200)
     if status_filter:
@@ -188,7 +187,7 @@ def list_webhooks(status_filter: str | None = None, username: str = Depends(requ
 # ---------------------------------------------------------------- reconciliation and ledger
 
 @router.post("/reconciliation/run", status_code=201)
-def run_reconciliation(payload: ReconRequest, username: str = Depends(require_admin),
+def run_reconciliation(payload: ReconRequest, username: str = Depends(require_ops),
                        db: Session = Depends(get_db)) -> dict:
     """Compare ALL internal payments with a provider settlement report. The run is stored."""
     try:
@@ -201,7 +200,7 @@ def run_reconciliation(payload: ReconRequest, username: str = Depends(require_ad
 
 
 @router.get("/reconciliation/runs/{run_id}")
-def read_reconciliation(run_id: int, username: str = Depends(require_admin),
+def read_reconciliation(run_id: int, username: str = Depends(require_ops),
                         db: Session = Depends(get_db)) -> dict:
     run = db.get(ReconciliationRun, run_id)
     if run is None:
@@ -210,7 +209,7 @@ def read_reconciliation(run_id: int, username: str = Depends(require_admin),
 
 
 @router.get("/ledger/trial-balance")
-def trial_balance(username: str = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+def trial_balance(username: str = Depends(require_ops), db: Session = Depends(get_db)) -> dict:
     lines = ledger_service.all_lines(db)
     return {
         "balanced": trial_balance_is_zero(lines),
@@ -220,6 +219,44 @@ def trial_balance(username: str = Depends(require_admin), db: Session = Depends(
 
 
 @router.get("/ledger/integrity")
-def integrity(username: str = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+def integrity(username: str = Depends(require_ops), db: Session = Depends(get_db)) -> dict:
     issues = ledger_integrity(db)
     return {"ok": not issues, "issue_count": len(issues), "issues": issues}
+
+
+@router.post("/ops/webhooks/{event_id}/requeue")
+def requeue_webhook(event_id: str, username: str = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+    """Put a dead-lettered event back in the queue after a human has fixed its cause."""
+    event = db.scalar(select(WebhookEvent).where(WebhookEvent.event_id == event_id).with_for_update())
+    if event is None:
+        raise HTTPException(status_code=404, detail="webhook event not found")
+    if event.status != "DEAD":
+        raise HTTPException(status_code=409, detail=f"only DEAD events can be requeued (status is {event.status})")
+    event.status, event.attempts, event.next_attempt_at = "RECEIVED", 0, datetime.now(timezone.utc)
+    db.commit()
+    return {"event_id": event.event_id, "status": event.status, "attempts": event.attempts}
+
+
+# ---------------------------------------------------------------- role administration
+
+@router.get("/admin/roles/{username}")
+def read_roles(username: str, admin: str = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+    return {"username": username, "roles": sorted(roles.granted_roles(db, username))}
+
+
+@router.post("/admin/roles", status_code=201)
+def grant_role(payload: RoleGrantRequest, admin: str = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+    created = roles.grant(db, payload.username, payload.role)
+    return {"username": payload.username, "role": payload.role, "created": created}
+
+
+@router.delete("/admin/roles/{username}/{role}")
+def revoke_role(username: str, role: str, admin: str = Depends(require_admin),
+                db: Session = Depends(get_db)) -> dict:
+    try:
+        removed = roles.revoke(db, username, role)
+    except roles.UnknownRole as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not removed:
+        raise HTTPException(status_code=404, detail="no such role grant")
+    return {"username": username, "role": role, "revoked": True}

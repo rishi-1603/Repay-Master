@@ -6,6 +6,7 @@ Invariants enforced by the database, not only by application code:
   * payments(loan_id, idempotency_key) is unique: a retried intent cannot double-create.
   * payments.provider_reference is unique: one provider transaction maps to one payment.
   * webhook_events.event_id is unique: a redelivered webhook is recognised and ignored.
+  * role_grants(username, role) is the primary key: a role is granted at most once.
 """
 from datetime import datetime, timezone
 
@@ -34,6 +35,8 @@ class LoanAccount(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner: Mapped[str] = mapped_column(String(64), index=True)
     principal_original: Mapped[int] = mapped_column(BigInteger, CheckConstraint("principal_original > 0"))
+    interest_original: Mapped[int] = mapped_column(BigInteger, CheckConstraint("interest_original >= 0"), default=0)
+    fees_original: Mapped[int] = mapped_column(BigInteger, CheckConstraint("fees_original >= 0"), default=0)
     principal_outstanding: Mapped[int] = mapped_column(BigInteger, CheckConstraint("principal_outstanding >= 0"))
     interest_due: Mapped[int] = mapped_column(BigInteger, CheckConstraint("interest_due >= 0"))
     fees_due: Mapped[int] = mapped_column(BigInteger, CheckConstraint("fees_due >= 0"))
@@ -56,6 +59,7 @@ class Payment(Base):
     fee_applied: Mapped[int] = mapped_column(BigInteger, default=0)
     interest_applied: Mapped[int] = mapped_column(BigInteger, default=0)
     principal_applied: Mapped[int] = mapped_column(BigInteger, default=0)
+    credit_applied: Mapped[int] = mapped_column(BigInteger, default=0)   # overpayment kept for the customer
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
@@ -107,6 +111,20 @@ class ReconciliationException(Base):
     detail: Mapped[str] = mapped_column(String(255))
 
     run: Mapped[ReconciliationRun] = relationship(back_populates="exceptions")
+
+
+class RoleGrant(Base):
+    """Operational roles, checked on every request (not carried in the token), so a revoke is immediate.
+
+    ops:   run webhook drains, reconciliation, trial balance, integrity checks, read the inbox.
+    admin: everything ops can do, plus manage roles and requeue dead-lettered webhooks.
+    Customers hold no grant: they can only reach loans they own.
+    """
+    __tablename__ = "role_grants"
+
+    username: Mapped[str] = mapped_column(String(64), primary_key=True)
+    role: Mapped[str] = mapped_column(String(16), primary_key=True)
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class JournalEntry(Base):

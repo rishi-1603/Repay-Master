@@ -6,6 +6,7 @@ Chart of accounts (kept deliberately small):
   interest_income   revenue    interest earned
   fee_income        revenue    late and processing fees earned
   suspense          liability  unmatched receipts awaiting investigation
+  customer_credit   liability  money received beyond what was owed (an overpayment)
 
 Every journal entry must balance: total debits == total credits, in integer paise.
 Posted entries are never edited. A correction is a new reversing entry.
@@ -19,6 +20,7 @@ ACCOUNTS = {
     "interest_income": "revenue",
     "fee_income": "revenue",
     "suspense": "liability",
+    "customer_credit": "liability",
 }
 DEBIT, CREDIT = "D", "C"
 
@@ -53,14 +55,15 @@ def validate_entry(lines: list[Line]) -> None:
         raise UnbalancedEntry(f"entry does not balance: debits {debits} != credits {credits}")
 
 
-def repayment_lines(total: int, principal: int, interest: int, fee: int) -> list[Line]:
-    """Lines for a successful repayment, allocated as principal + interest + fee."""
-    if total != principal + interest + fee:
+def repayment_lines(total: int, principal: int, interest: int, fee: int, credit: int = 0) -> list[Line]:
+    """Lines for a successful repayment: principal + interest + fee + overpayment credit."""
+    if total != principal + interest + fee + credit:
         raise UnbalancedEntry("allocation does not add up to the payment total")
     lines = [Line("payment_clearing", DEBIT, total)]
     for account, amount in (("loan_receivable", principal),
                             ("interest_income", interest),
-                            ("fee_income", fee)):
+                            ("fee_income", fee),
+                            ("customer_credit", credit)):
         if amount > 0:
             lines.append(Line(account, CREDIT, amount))
     validate_entry(lines)

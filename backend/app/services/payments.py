@@ -12,6 +12,9 @@ Idempotency layers, in order:
   * payments(loan_id, idempotency_key) unique: a retried payment intent is created once.
   * journal_entries.idempotency_key unique: a payment's money moves at most once.
   * Row locks on the payment and loan rows serialise concurrent workers on PostgreSQL.
+
+An overpayment is accepted. The waterfall takes what is owed; the excess is credited to the
+customer (customer_credit) and recorded on the payment, so the money is never lost or refused.
 """
 import json
 import secrets
@@ -23,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import JournalEntry, LoanAccount, Payment, WebhookEvent
 from app.domain.ledger import Line, repayment_lines, reversal_lines
-from app.domain.payments import InvalidTransition, Overpayment, PaymentState, allocate, transition
+from app.domain.payments import InvalidTransition, PaymentState, allocate, transition
 from app.services.ledger_service import post_entry
 
 ACTIVE = ("RECEIVED", "RETRY")
@@ -65,8 +68,6 @@ def create_intent(session: Session, loan: LoanAccount, amount: int, idempotency_
         if existing.amount != amount:
             raise IdempotencyConflict("idempotency key was already used for a different amount")
         return existing, False
-    if amount > amount_owed(loan):
-        raise Overpayment("payment exceeds the amount owed")
     payment = Payment(loan_id=loan.id, idempotency_key=idempotency_key,
                       reference=f"PAY-{secrets.token_hex(8).upper()}", amount=amount,
                       state=PaymentState.INITIATED.value)
@@ -93,20 +94,21 @@ def _apply_success(session: Session, payment: Payment, provider_reference: str |
     loan = session.get(LoanAccount, payment.loan_id, with_for_update=True)
     try:
         transition(PaymentState(payment.state), PaymentState.SUCCESSFUL)
-        fee, interest, principal = allocate(payment.amount, loan.fees_due, loan.interest_due,
-                                            loan.principal_outstanding)
-    except (InvalidTransition, Overpayment) as exc:
+        fee, interest, principal, credit = allocate(payment.amount, loan.fees_due, loan.interest_due,
+                                                    loan.principal_outstanding)
+    except InvalidTransition as exc:
         _post_suspense(session, f"payment:{payment.id}:suspense", payment.amount,
                        f"unapplied receipt {payment.reference}: {exc}")
         return "needs_review"
     payment.state = PaymentState.SUCCESSFUL.value
     payment.provider_reference = provider_reference or payment.provider_reference
     payment.fee_applied, payment.interest_applied, payment.principal_applied = fee, interest, principal
+    payment.credit_applied = credit
     loan.fees_due -= fee
     loan.interest_due -= interest
     loan.principal_outstanding -= principal
     post_entry(session, f"payment:{payment.id}:success", f"repayment {payment.reference}",
-               repayment_lines(payment.amount, principal, interest, fee))
+               repayment_lines(payment.amount, principal, interest, fee, credit))
     return "applied"
 
 

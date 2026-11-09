@@ -32,10 +32,6 @@ class InvalidTransition(ValueError):
     pass
 
 
-class Overpayment(ValueError):
-    pass
-
-
 def transition(current: PaymentState, target: PaymentState) -> PaymentState:
     if target not in ALLOWED_TRANSITIONS[current]:
         raise InvalidTransition(f"cannot move a payment from {current.value} to {target.value}")
@@ -45,18 +41,17 @@ def transition(current: PaymentState, target: PaymentState) -> PaymentState:
 def allocate(amount: int, fees_due: int, interest_due: int, principal_outstanding: int):
     """Waterfall: fees first, then interest, then principal. Amounts in paise.
 
-    Returns (fee, interest, principal). Overpayment beyond what is owed is rejected
-    rather than silently absorbed. Overpayment handling is a separate feature.
+    Returns (fee, interest, principal, credit). Whatever exceeds the amount owed is
+    `credit`: it is kept for the customer (a liability), not refused and not dropped.
     """
     if amount <= 0:
         raise ValueError("payment amount must be positive")
     owed = fees_due + interest_due + principal_outstanding
-    if amount > owed:
-        raise Overpayment(f"payment {amount} exceeds the amount owed {owed}")
-    fee = min(amount, fees_due)
-    interest = min(amount - fee, interest_due)
-    principal = amount - fee - interest
-    return fee, interest, principal
+    applicable = min(amount, owed)
+    fee = min(applicable, fees_due)
+    interest = min(applicable - fee, interest_due)
+    principal = applicable - fee - interest
+    return fee, interest, principal, amount - applicable
 
 
 SIGNATURE_TOLERANCE_SECONDS = 300

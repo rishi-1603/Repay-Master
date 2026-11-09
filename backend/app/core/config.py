@@ -60,10 +60,6 @@ class Settings(BaseSettings):
     # when unset, the webhook endpoint refuses every request (503), never accepts unsigned ones.
     PAYMENT_WEBHOOK_SECRET: str | None = None
 
-    # Comma-separated usernames allowed to use operations endpoints (trial balance,
-    # reconciliation). Everyone else gets 403. Empty means nobody.
-    ADMIN_USERNAMES: str = ""
-
     @model_validator(mode="after")
     def _secret_key_must_be_long_enough(self) -> "Settings":
         """Refuse to run in production with a signing key short enough to
