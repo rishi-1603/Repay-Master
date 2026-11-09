@@ -417,5 +417,23 @@ uvicorn app.main:app --reload
 - Reconciliation reports missing settlements, unposted receipts, amount mismatches,
   duplicate settlement rows, and reversals not reflected on either side.
 
-The ledger tests run on SQLite. The PostgreSQL DDL is generated and checked with
-`alembic upgrade head --sql`, but a live PostgreSQL run is not yet part of CI.
+**Webhook processing and the worker**
+- `POST /webhooks/payments` verifies the signature, stores the event in an inbox, and
+  returns `202`. It does not apply money.
+- `python -m app.worker` (or `POST /ops/webhooks/drain`, operations only) processes the
+  inbox. Transient failures retry with exponential backoff (up to 5 attempts). Malformed
+  or permanently failing events go to `DEAD` and stay visible at `GET /ops/webhooks?status_filter=dead`.
+- Many workers can run at once. On PostgreSQL, `SKIP LOCKED` and row locks keep each event
+  applied exactly once. A test runs concurrent workers to check this.
+
+**Operations** (admin only, via `ADMIN_USERNAMES`)
+- `POST /reconciliation/run` stores a reconciliation report; `GET /reconciliation/runs/{id}` reads it back.
+- `GET /ledger/integrity` checks that the books agree with payments and loans: trial balance,
+  each payment's entries matching its status, and each loan's principal reconciling.
+- `GET /ledger/trial-balance` shows account balances.
+
+**Testing**
+- `pytest app/tests/` runs on SQLite by default.
+- `TEST_DATABASE_URL=postgresql+psycopg://user:pass@host/db pytest app/tests/` runs the same
+  suite on PostgreSQL, including the concurrency test. CI runs this on a PostgreSQL 16
+  service container, along with a migration round trip.

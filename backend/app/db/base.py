@@ -20,6 +20,10 @@ class Base(DeclarativeBase):
 @lru_cache
 def get_engine(url: str | None = None):
     url = url or settings.DATABASE_URL
+    if url.startswith("sqlite:///") and not url.startswith("sqlite:///:memory:"):
+        import os
+        path = url[len("sqlite:///"):]
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {"pool_pre_ping": True}
     engine = create_engine(url, **kwargs)
     if url.startswith("sqlite"):
@@ -44,3 +48,8 @@ def get_db() -> Iterator[Session]:
         yield session
     finally:
         session.close()
+
+
+def get_session_factory() -> sessionmaker:
+    """Dependency that hands out the session factory. Tests override it to use their database."""
+    return session_factory()

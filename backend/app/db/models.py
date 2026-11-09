@@ -33,6 +33,7 @@ class LoanAccount(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner: Mapped[str] = mapped_column(String(64), index=True)
+    principal_original: Mapped[int] = mapped_column(BigInteger, CheckConstraint("principal_original > 0"))
     principal_outstanding: Mapped[int] = mapped_column(BigInteger, CheckConstraint("principal_outstanding >= 0"))
     interest_due: Mapped[int] = mapped_column(BigInteger, CheckConstraint("interest_due >= 0"))
     fees_due: Mapped[int] = mapped_column(BigInteger, CheckConstraint("fees_due >= 0"))
@@ -62,14 +63,50 @@ class Payment(Base):
 
 
 class WebhookEvent(Base):
+    """Inbox. A verified webhook is stored here first, then processed by a worker.
+
+    status: RECEIVED (waiting), RETRY (failed transiently, waiting for next_attempt_at),
+            PROCESSED (done), DEAD (gave up; needs a human).
+    """
     __tablename__ = "webhook_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     event_id: Mapped[str] = mapped_column(String(128), unique=True)
     event_type: Mapped[str] = mapped_column(String(64))
     payload: Mapped[str] = mapped_column(Text)
-    result: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="RECEIVED", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    result: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReconciliationRun(Base):
+    __tablename__ = "reconciliation_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_by: Mapped[str] = mapped_column(String(64))
+    checked_internal: Mapped[int] = mapped_column(Integer)
+    checked_settlement: Mapped[int] = mapped_column(Integer)
+    exception_count: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    exceptions: Mapped[list["ReconciliationException"]] = relationship(
+        back_populates="run", order_by="ReconciliationException.id", cascade="all, delete-orphan")
+
+
+class ReconciliationException(Base):
+    __tablename__ = "reconciliation_exceptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("reconciliation_runs.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    reference: Mapped[str] = mapped_column(String(64))
+    detail: Mapped[str] = mapped_column(String(255))
+
+    run: Mapped[ReconciliationRun] = relationship(back_populates="exceptions")
 
 
 class JournalEntry(Base):
