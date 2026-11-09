@@ -16,7 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import auth, history, loans, risk, servicing
+from app.api import auth, history, loans, payments, risk, servicing
 from app.core.config import settings
 from app.core.cors import resolve_cors_origins
 
@@ -55,6 +55,7 @@ app.include_router(risk.router)
 app.include_router(auth.router)
 app.include_router(history.router)
 app.include_router(servicing.router)
+app.include_router(payments.router)
 
 
 @app.get("/", include_in_schema=False)

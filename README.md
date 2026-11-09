@@ -378,3 +378,44 @@ Three changes, made together because each one alone would have been misleading:
 The Streamlit app (`app.py`) still works standalone and now shares the
 Decimal-hardened finance core described above; it does not yet call this API
 internally.
+
+## Loan servicing, payments and ledger API (backend)
+
+Money is stored and computed as integer paise and returned as two-decimal strings.
+Posted journal entries are never edited; corrections are reversing entries.
+
+**Setup**
+```bash
+cd backend
+pip install -r requirements.txt
+export SECRET_KEY=$(python -c "import secrets;print(secrets.token_urlsafe(48))")
+export PAYMENT_WEBHOOK_SECRET=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
+alembic upgrade head            # creates the ledger/payments schema (SQLite or PostgreSQL)
+uvicorn app.main:app --reload
+```
+
+**Servicing simulator** (`utils/servicing.py`)
+- `POST /loan/servicing/simulate`: rate changes, payment holidays, restructuring,
+  extra and partial payments, late fees, processing fee.
+- `POST /loan/servicing/foreclosure-quote`: payoff amount before a given installment.
+- `POST /loan/servicing/compare`: baseline versus named what-if scenarios.
+
+**Payments and ledger**
+- `POST /loans` and `GET /loans/{id}`: loan accounts (owner-scoped).
+- `POST /loans/{id}/payments`: payment intent, idempotent on `idempotency_key`.
+- `POST /payments/{reference}/retry`: retry a failed payment.
+- `POST /webhooks/payments`: signed webhook. Header `X-Webhook-Signature: t=<unix>,v1=<hmac>`,
+  where the HMAC is SHA-256 over `"<t>." + raw body`, keyed with `PAYMENT_WEBHOOK_SECRET`.
+  Timestamps older than 300 seconds are rejected. Events are deduplicated by `id`.
+- `POST /reconciliation/run` and `GET /ledger/trial-balance`: operations only (`ADMIN_USERNAMES`).
+
+**Guarantees, each covered by tests**
+- Every journal entry balances (debits equal credits), and the trial balance is zero.
+- Redelivered webhooks and retried intents never move money twice.
+- Overpayments are refused, not absorbed. A receipt that cannot be applied is parked in suspense.
+- Reversals restore loan balances and net the clearing account to zero.
+- Reconciliation reports missing settlements, unposted receipts, amount mismatches,
+  duplicate settlement rows, and reversals not reflected on either side.
+
+The ledger tests run on SQLite. The PostgreSQL DDL is generated and checked with
+`alembic upgrade head --sql`, but a live PostgreSQL run is not yet part of CI.

@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
+    # Ledger and payments database. sqlite is the local default; set DATABASE_URL to a
+    # postgresql+psycopg URL in production. Schema is managed by Alembic (backend/alembic).
+    DATABASE_URL: str = "sqlite:///./data/repaymaster_ledger.db"
+
+    # Shared secret for verifying payment-provider webhooks (HMAC-SHA256). No default:
+    # when unset, the webhook endpoint refuses every request (503), never accepts unsigned ones.
+    PAYMENT_WEBHOOK_SECRET: str | None = None
+
+    # Comma-separated usernames allowed to use operations endpoints (trial balance,
+    # reconciliation). Everyone else gets 403. Empty means nobody.
+    ADMIN_USERNAMES: str = ""
+
     @model_validator(mode="after")
     def _secret_key_must_be_long_enough(self) -> "Settings":
         """Refuse to run in production with a signing key short enough to
