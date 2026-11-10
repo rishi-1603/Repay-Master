@@ -461,3 +461,7 @@ uvicorn app.main:app --reload
 - `TEST_DATABASE_URL=postgresql+psycopg://user:pass@host/db pytest app/tests/` runs the same
   suite on PostgreSQL, including the concurrency test. CI runs this on a PostgreSQL 16
   service container, along with a migration round trip.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the commit message convention and the checks to run before pushing.
