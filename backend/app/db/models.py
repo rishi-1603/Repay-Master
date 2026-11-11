@@ -113,6 +113,18 @@ class ReconciliationException(Base):
     run: Mapped[ReconciliationRun] = relationship(back_populates="exceptions")
 
 
+class AuditEvent(Base):
+    """Append-only record of privileged actions. Written in the same transaction as the change."""
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(40))
+    target: Mapped[str] = mapped_column(String(128))
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
 class RoleGrant(Base):
     """Operational roles, checked on every request (not carried in the token), so a revoke is immediate.
 

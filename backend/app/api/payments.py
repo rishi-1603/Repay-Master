@@ -31,7 +31,7 @@ from app.domain.money import to_major_str, to_minor  # noqa: E402
 from app.domain.payments import InvalidTransition, verify_signature  # noqa: E402
 from app.schemas.admin import RoleGrantRequest  # noqa: E402
 from app.schemas.payments import LoanCreate, PaymentCreate, ReconRequest  # noqa: E402
-from app.services import ledger_service, roles  # noqa: E402
+from app.services import audit, ledger_service, roles  # noqa: E402
 from app.services.ledger_checks import ledger_integrity, persist_reconciliation, run_view  # noqa: E402
 from app.services.payments import (  # noqa: E402
     IdempotencyConflict,
@@ -233,6 +233,7 @@ def requeue_webhook(event_id: str, username: str = Depends(require_admin), db: S
     if event.status != "DEAD":
         raise HTTPException(status_code=409, detail=f"only DEAD events can be requeued (status is {event.status})")
     event.status, event.attempts, event.next_attempt_at = "RECEIVED", 0, datetime.now(timezone.utc)
+    audit.record(db, username, "webhook.requeue", event_id)
     db.commit()
     return {"event_id": event.event_id, "status": event.status, "attempts": event.attempts}
 
@@ -246,7 +247,7 @@ def read_roles(username: str, admin: str = Depends(require_admin), db: Session =
 
 @router.post("/admin/roles", status_code=201)
 def grant_role(payload: RoleGrantRequest, admin: str = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
-    created = roles.grant(db, payload.username, payload.role)
+    created = roles.grant(db, payload.username, payload.role, actor=admin)
     return {"username": payload.username, "role": payload.role, "created": created}
 
 
@@ -254,9 +255,17 @@ def grant_role(payload: RoleGrantRequest, admin: str = Depends(require_admin), d
 def revoke_role(username: str, role: str, admin: str = Depends(require_admin),
                 db: Session = Depends(get_db)) -> dict:
     try:
-        removed = roles.revoke(db, username, role)
+        removed = roles.revoke(db, username, role, actor=admin)
     except roles.UnknownRole as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     if not removed:
         raise HTTPException(status_code=404, detail="no such role grant")
     return {"username": username, "role": role, "revoked": True}
+
+
+@router.get("/admin/audit")
+def read_audit(limit: int = 100, admin: str = Depends(require_admin), db: Session = Depends(get_db)) -> list[dict]:
+    if not 1 <= limit <= 500:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
+    return [{"id": e.id, "actor": e.actor, "action": e.action, "target": e.target, "detail": e.detail,
+             "created_at": e.created_at.isoformat()} for e in audit.recent(db, limit)]

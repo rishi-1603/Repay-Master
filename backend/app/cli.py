@@ -24,10 +24,10 @@ def main(argv: list[str] | None = None) -> int:
 
     with session_factory()() as session:
         if args.command == "grant-role":
-            changed = roles.grant(session, args.username, args.role)
+            changed = roles.grant(session, args.username, args.role, actor="cli")
             print(f"granted {args.role} to {args.username}" if changed else f"{args.username} already has {args.role}")
         else:
-            changed = roles.revoke(session, args.username, args.role)
+            changed = roles.revoke(session, args.username, args.role, actor="cli")
             print(f"revoked {args.role} from {args.username}" if changed else f"{args.username} does not have {args.role}")
     return 0
 
