@@ -28,6 +28,7 @@ results in the body or the pull request, not in the subject.
 ## Before you push
 
 - Run the backend tests: `cd backend && pytest app/tests/`.
+- Run the Streamlit app tests from the repo root: `pytest tests/` (needs the root requirements).
 - Run the same tests against PostgreSQL when you touch the ledger or migrations:
   `TEST_DATABASE_URL=postgresql+psycopg://user:pass@host/db pytest app/tests/`.
 - Lint with `ruff check app` (the CI configuration).

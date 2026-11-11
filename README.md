@@ -447,6 +447,9 @@ uvicorn app.main:app --reload
     fee, customer credit) equals what the payment applied;
   - for each loan, principal, interest and fees reconcile: original minus applied equals the balance.
 - `GET /ledger/trial-balance` shows account balances.
+- `GET /admin/audit` (admin): the audit trail. Role grants and revokes, and webhook requeues, are
+  recorded with the actor, the target and the time, in the same transaction as the change.
+  The CLI records as actor `cli`.
 
 **Deployment (docker compose)**
 - Services: `postgres` (17), `migrate` (runs `alembic upgrade head` once and exits), `api`, and `worker`
