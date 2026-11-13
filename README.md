@@ -379,100 +379,43 @@ The Streamlit app (`app.py`) still works standalone and now shares the
 Decimal-hardened finance core described above; it does not yet call this API
 internally.
 
-## Loan servicing, payments and ledger API (backend)
+## Loan ledger, statements and arrears (backend)
 
-Money is stored and computed as integer paise and returned as two-decimal strings.
-Posted journal entries are never edited; corrections are reversing entries.
+Loans and their repayments are stored in PostgreSQL. Money is `Decimal` in the
+database (`NUMERIC(14,2)`) and returned as two-decimal strings. Journal entries
+are append-only: a repayment is undone with a reversing entry, never by editing
+the original row.
 
 **Setup**
 ```bash
 cd backend
 pip install -r requirements.txt
 export SECRET_KEY=$(python -c "import secrets;print(secrets.token_urlsafe(48))")
-export PAYMENT_WEBHOOK_SECRET=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
-alembic upgrade head            # creates the ledger/payments schema (SQLite or PostgreSQL)
+export DATABASE_URL=postgresql+psycopg://rm:<password>@127.0.0.1:5432/repaymaster
+alembic upgrade head     # creates loan_accounts and loan_journal
 uvicorn app.main:app --reload
 ```
 
-**Servicing simulator** (`utils/servicing.py`)
-- `POST /loan/servicing/simulate`: rate changes, payment holidays, restructuring,
-  extra and partial payments, late fees, processing fee.
-- `POST /loan/servicing/foreclosure-quote`: payoff amount before a given installment.
-- `POST /loan/servicing/compare`: baseline versus named what-if scenarios.
+**Endpoints** (all owner-scoped: a loan that belongs to someone else returns 404)
+- `POST /ledger/loans`: open a loan with `principal`, optional `due_date`, optional `opened_on`.
+- `GET /ledger/loans/{id}`: balance, due date, `days_past_due` and `delinquency_bucket`.
+- `POST /ledger/loans/{id}/repayments`: post a repayment. It is refused with 409 if it would exceed the balance.
+- `POST /ledger/repayments/{entry_id}/reverse`: reverse a repayment. Each repayment can be reversed once.
+- `PUT /ledger/loans/{id}/due-date`: set or clear the due date.
+- `GET /ledger/loans/{id}/statement?from=YYYY-MM-DD&to=YYYY-MM-DD`: opening and closing balance, and each posting in the period. With no end date the response says whether the closing balance matches the stored loan balance (`reconciles_with_loan_balance`).
+- `GET /ledger/delinquency?as_of=YYYY-MM-DD`: loans grouped into current, 1-30, 31-60, 61-90, 90+, unscheduled and closed, with totals and the overdue list.
 
-**Payments and ledger**
-- `POST /loans` and `GET /loans/{id}`: loan accounts (owner-scoped).
-- `POST /loans/{id}/payments`: payment intent, idempotent on `idempotency_key`.
-- `POST /payments/{reference}/retry`: retry a failed payment.
-- `GET /loans/{id}/statement?from=YYYY-MM-DD&to=YYYY-MM-DD`: the owner's statement. Opening and closing
-  amount owed, each repayment and reversal with its split and date, and overpayment credit. The entries
-  come from the journal, and with no end date the response confirms the closing balance equals the loan's
-  current balance (`reconciles_with_loan_balance`).
-- `GET /ops/delinquency?as_of=YYYY-MM-DD` (ops): arrears aging. Buckets are current, 1-30, 31-60, 61-90,
-  90+ days past due, and unscheduled (a balance with no due date, never counted as current). The response
-  also lists each overdue loan with its days past due.
-- `PUT /ops/loans/{id}/due-date` (ops): set the installment due date. The change is audited. Loans also
-  accept an optional `due_date` at creation, and each loan view shows `days_past_due` and `delinquency_bucket`.
-- `POST /webhooks/payments`: signed webhook. Header `X-Webhook-Signature: t=<unix>,v1=<hmac>`,
-  where the HMAC is SHA-256 over `"<t>." + raw body`, keyed with `PAYMENT_WEBHOOK_SECRET`.
-  Timestamps older than 300 seconds are rejected. Events are deduplicated by `id`.
-- `POST /reconciliation/run` and `GET /ledger/trial-balance`: operations only (role `ops`, see below).
+**Limits, stated plainly**
+- Interest is not accrued. A statement shows postings only, so a repayment reduces the balance by its full amount.
+- Access is per owner. There is no ops or admin role in this tree yet.
+- Concurrent repayments on the same loan are serialised with `SELECT ... FOR UPDATE`. A test covers the race.
 
-**Guarantees, each covered by tests**
-- Every journal entry balances (debits equal credits), and the trial balance is zero.
-- Redelivered webhooks and retried intents never move money twice.
-- Overpayments are accepted, not refused. The waterfall takes fees, then interest, then principal, up to
-  what is owed. The excess is kept for the customer (`customer_credit`, shown on the payment as
-  `overpayment_credit`). Reversing the payment returns both the loan balances and the credit.
-- A receipt that cannot be applied at all (for example, a success for a failed payment) is parked in suspense.
-- Reversals restore loan balances and net the clearing account to zero.
-- Reconciliation reports missing settlements, unposted receipts, amount mismatches,
-  duplicate settlement rows, and reversals not reflected on either side.
-
-**Webhook processing and the worker**
-- `POST /webhooks/payments` verifies the signature, stores the event in an inbox, and
-  returns `202`. It does not apply money.
-- `python -m app.worker` (or `POST /ops/webhooks/drain`, operations only) processes the
-  inbox. Transient failures retry with exponential backoff (up to 5 attempts). Malformed
-  or permanently failing events go to `DEAD` and stay visible at `GET /ops/webhooks?status_filter=dead`.
-  After a human has fixed the cause, `POST /ops/webhooks/{event_id}/requeue` (admin) puts a dead event back.
-- Many workers can run at once. On PostgreSQL, `SKIP LOCKED` and row locks keep each event
-  applied exactly once. A test runs concurrent workers to check this.
-
-**Operations and roles**
-- Roles are stored in the database (`role_grants`) and checked on every request, so a revoke
-  takes effect on the next call. The token does not carry roles.
-  - `ops`: drain the inbox, read the inbox, run reconciliation, read the trial balance and integrity report.
-  - `admin`: everything `ops` can do, plus requeue dead events and grant or revoke roles. `admin` implies `ops`.
-  - Customers hold no role and can reach only the loans they own.
-- Bootstrap the first admin from a shell inside the API container (or with `DATABASE_URL` set):
-  `python -m app.cli grant-role <username> admin`. Revoke with `python -m app.cli revoke-role <username> <role>`.
-  Later grants can be made over the API with `POST /admin/roles` (admin only).
-- `POST /reconciliation/run` stores a reconciliation report; `GET /reconciliation/runs/{id}` reads it back.
-- `GET /ledger/integrity` checks that the books agree with the payments and loans they describe:
-  - every journal entry balances, and the trial balance is zero;
-  - each payment's entries match its status, and a reversal nets the original to zero;
-  - for each successful payment, the amount posted to each account (clearing, principal, interest,
-    fee, customer credit) equals what the payment applied;
-  - for each loan, principal, interest and fees reconcile: original minus applied equals the balance.
-- `GET /ledger/trial-balance` shows account balances.
-- `GET /admin/audit` (admin): the audit trail. Role grants and revokes, and webhook requeues, are
-  recorded with the actor, the target and the time, in the same transaction as the change.
-  The CLI records as actor `cli`.
-
-**Deployment (docker compose)**
-- Services: `postgres` (17), `migrate` (runs `alembic upgrade head` once and exits), `api`, and `worker`
-  (`python -m app.worker`). `api` and `worker` start only after migrations succeed.
-- Required in `.env`: `SECRET_KEY`, `POSTGRES_PASSWORD`. Set `PAYMENT_WEBHOOK_SECRET` to accept webhooks.
-  Use a URL-safe password: it is embedded in `DATABASE_URL`.
-- Scale workers with `docker compose up -d --scale worker=3`. Row locks keep each event applied once on PostgreSQL.
-- Users and saved scenarios stay in sqlite under the `repaymaster_data` volume.
-
-**Testing**
-- `pytest app/tests/` runs on SQLite by default.
-- `TEST_DATABASE_URL=postgresql+psycopg://user:pass@host/db pytest app/tests/` runs the same
-  suite on PostgreSQL, including the concurrency test. CI runs this on a PostgreSQL 16
-  service container, along with a migration round trip.
+**Tests**
+```bash
+cd backend
+DATABASE_URL=postgresql+psycopg://rm:<password>@127.0.0.1:5432/repaymaster_pytest pytest app/tests/
+```
+The ledger tests need the PostgreSQL test database. They create the schema and empty the ledger tables before each test.
 
 ## Contributing
 
