@@ -35,13 +35,9 @@
 # deleting its images from Docker Hub on 2026-09-11.
 #
 # Stack (Day 3-4 operations work):
-#   postgres  the ledger, payments, webhook inbox and reconciliation database.
-#   migrate   one-shot: applies the Alembic migrations, then exits. api and worker wait for it.
-#   api       FastAPI. Accepts signed webhooks into the inbox and serves loans and operations.
-#   worker    drains the webhook inbox (python -m app.worker). Run as many replicas as needed:
-#             claims use row locks, so an event is applied once.
-# Users and saved scenarios stay in sqlite under the repaymaster_data volume (utils/auth.py).
-# The in-process rate limiter is per replica, so scale api horizontally only behind a shared limiter.
+#   postgres  the loan ledger database.
+#   migrate   one-shot: applies the Alembic migrations, then exits. api waits for it.
+#   api       FastAPI. Serves loans, the ledger and saved scenarios.
 services:
   postgres:
     image: postgres:17
@@ -73,7 +69,6 @@ services:
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in a .env file -- see backend/.env.example}
       ACCESS_TOKEN_EXPIRE_MINUTES: "60"
       DATABASE_URL: postgresql+psycopg://rm:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in a .env file}@postgres:5432/repaymaster
-      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,20 +109,6 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  worker:
-    build: .
-    container_name: repaymaster_worker
-    command: ["python", "-m", "app.worker"]
-    environment:
-      <<: *app-env
-      WORKER_POLL_SECONDS: "2"
-      WORKER_BATCH_SIZE: "50"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    restart: unless-stopped
 
 volumes:
   repaymaster_data:
