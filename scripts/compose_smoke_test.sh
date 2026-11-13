@@ -173,6 +173,75 @@ $COMPOSE_CMD exec -T api test -s /app/data/app.db \
   || die "/app/data/app.db does not exist after a successful register -- utils/auth.py is not writing where the volume is mounted"
 pass "/app/data/app.db exists and is non-empty (persisted via the repaymaster_data volume)"
 
+echo "=== 8. payments ledger: the worker container applies a signed webhook ==="
+# migrate has applied the schema; the api accepts a signed webhook into the inbox; the
+# WORKER (not the api) must apply it. This script never calls /ops/webhooks/drain.
+# PAYMENT_WEBHOOK_SECRET must be exported to this script and to compose (CI does both).
+: "${PAYMENT_WEBHOOK_SECRET:?export PAYMENT_WEBHOOK_SECRET (the value the stack was started with)}"
+$COMPOSE_CMD ps --status running --services | grep -qx worker \
+  || die "the worker container is not running (see: $COMPOSE_CMD logs worker)"
+pass "worker container is running"
+
+SMOKE_PASSWORD="password123"
+register_and_login() {
+  curl -s -o /dev/null -X POST "$BASE/auth/register" -H "Content-Type: application/json" \
+    -d "{\"username\":\"$1\",\"password\":\"$SMOKE_PASSWORD\"}"
+  curl -sf -X POST "$BASE/auth/login" -H "Content-Type: application/json" \
+    -d "{\"username\":\"$1\",\"password\":\"$SMOKE_PASSWORD\"}" | json_get "['access_token']"
+}
+OPS_USER="smoke-ops-$$"
+CUST_USER="smoke-cust-$$"
+ADMIN_TOKEN="$(register_and_login "$OPS_USER")"
+CUST_TOKEN="$(register_and_login "$CUST_USER")"
+[ -n "$ADMIN_TOKEN" ] && [ -n "$CUST_TOKEN" ] || die "could not register and log in the smoke users"
+
+$COMPOSE_CMD exec -T api python -m app.cli grant-role "$OPS_USER" admin \
+  || die "app.cli grant-role failed in the api container (was the migrate service applied?)"
+pass "granted admin to $OPS_USER with the operator CLI inside the api container"
+
+CODE="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/ledger/integrity" -H "Authorization: Bearer $CUST_TOKEN")"
+[ "$CODE" = "403" ] || die "a customer without a grant reached /ledger/integrity -> $CODE (want 403)"
+pass "customer without a grant is refused /ledger/integrity (403)"
+
+LOAN_ID="smoke-loan-$$"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/loans" -H "Authorization: Bearer $CUST_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"loan_id\":\"$LOAN_ID\",\"principal_outstanding\":100,\"interest_due\":5,\"fees_due\":1}")"
+[ "$CODE" = "201" ] || die "POST /loans -> $CODE (want 201; the ledger tables may be missing)"
+
+PAY="$(curl -sf -X POST "$BASE/loans/$LOAN_ID/payments" -H "Authorization: Bearer $CUST_TOKEN" \
+  -H "Content-Type: application/json" -d '{"amount":10,"idempotency_key":"smoke-key-'"$$"'-0001"}')" \
+  || die "POST /loans/$LOAN_ID/payments failed"
+REF="$(printf '%s' "$PAY" | json_get "['reference']")"
+
+EVENT_ID="evt-smoke-$$"
+BODY="$(python3 -c "import json,sys; print(json.dumps({'id': sys.argv[1], 'type': 'payment.succeeded', 'data': {'reference': sys.argv[2], 'provider_reference': 'SMOKE-' + sys.argv[1]}}, separators=(',', ':')))" "$EVENT_ID" "$REF")"
+SIG="$(printf '%s' "$BODY" | python3 -c "import sys,time,hmac,hashlib; ts=int(time.time()); body=sys.stdin.buffer.read(); mac=hmac.new(sys.argv[1].encode(), f'{ts}.'.encode()+body, hashlib.sha256).hexdigest(); print(f't={ts},v1={mac}')" "$PAYMENT_WEBHOOK_SECRET")"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/webhooks/payments" -H "Content-Type: application/json" \
+  -H "X-Webhook-Signature: $SIG" --data-binary "$BODY")"
+[ "$CODE" = "202" ] || die "signed webhook -> $CODE (want 202; 503 means PAYMENT_WEBHOOK_SECRET is not set in the stack)"
+pass "signed webhook accepted into the inbox (202)"
+
+STATE=""
+for i in $(seq 1 60); do
+  STATE="$(curl -sf "$BASE/loans/$LOAN_ID" -H "Authorization: Bearer $CUST_TOKEN" | python3 -c "import sys,json; ps=json.load(sys.stdin)['payments']; print(ps[0]['state'] if ps else '')")"
+  [ "$STATE" = "SUCCESSFUL" ] && break
+  sleep 1
+done
+if [ "$STATE" != "SUCCESSFUL" ]; then
+  $COMPOSE_CMD logs --tail 80 worker || true
+  die "the worker did not apply the webhook within 60s (payment state: '$STATE')"
+fi
+pass "payment $REF is SUCCESSFUL, applied by the worker"
+
+RESULT="$(curl -sf "$BASE/ops/webhooks" -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "import sys,json; r=[e['result'] for e in json.load(sys.stdin) if e['event_id']=='$EVENT_ID']; print(r[0] if r else '')")"
+[ "$RESULT" = "applied" ] || die "inbox shows result '$RESULT' for $EVENT_ID (want applied)"
+pass "inbox records the event as processed: applied"
+
+OK="$(curl -sf "$BASE/ledger/integrity" -H "Authorization: Bearer $ADMIN_TOKEN" | json_get "['ok']")"
+[ "$OK" = "True" ] || die "ledger integrity reports issues after the worker run: $(curl -sf "$BASE/ledger/integrity" -H "Authorization: Bearer $ADMIN_TOKEN")"
+pass "ledger integrity is clean"
+
 echo
 echo "PASS: Repay-Master compose stack verified end to end"
 echo "      (artifacts in image -> healthy container -> loan maths -> joblib+SHAP"
