@@ -30,6 +30,47 @@ personalized repayment strategies with Gemini.
 - **AI-Powered Recommendations** — Gemini-generated repayment strategy advice.
 - **PDF report export** of the full analysis.
 
+## Financial model, assumptions and rounding
+
+RepayMaster uses deterministic fixed-rate amortization; Gemini never calculates
+money. For principal `P`, annual percentage rate `a`, monthly rate
+`r = a / 1200`, and tenure `n` months, the unrounded EMI is:
+
+```text
+EMI = P × r × (1 + r)^n / ((1 + r)^n − 1)
+```
+
+The zero-interest branch is `EMI = P / n`. The amortization recurrence for each
+month is `interest = balance × r`, `principal = payment − interest`, and
+`balance = balance − principal`. Extra monthly payments and lump sums reduce
+principal in the month they are applied; the schedule ends early when the
+balance reaches zero. A maturity boundary prevents numerical residue from
+silently creating an extra payment after the requested term.
+
+Implementation assumptions are explicit: the rate is nominal annual percent
+compounded monthly; fees, taxes, penalties, grace periods and lender-specific
+prepayment rules are not modelled; payment dates are represented as
+`start_date + 30 days × month` for a stable timeline rather than calendar-aware
+billing; and the result is an estimate, not financial advice.
+
+`utils/finance.py` calculates with `Decimal` internally. EMI and total interest
+retain sub-cent precision until the API/UI edge; displayed schedule amounts and
+API response fields are rounded to two decimals using financial half-up rounding.
+This avoids the high-rate float failure found in the Day-8 audit (99.99% APR over
+360 months previously left a 324.76 residual and produced a hidden 361st row).
+The independent reference check is reproducible with:
+
+```bash
+python scripts/validate_finance_reference.py
+```
+
+One independently verified example (`P=250,000`, `a=8.5%`, `n=60`) gives an
+unrounded EMI of about `5,129.13283176`, total interest about `57,747.97`, and
+total repayment about `307,747.97`. Adding `5,000` per month reduces the
+observed schedule to 28 months and about `25,767.20` interest; the reference
+script checks the same result with 50-digit Decimal arithmetic and an analytic
+balance identity.
+
 ## Getting started
 
 ```bash
@@ -38,6 +79,16 @@ streamlit run app.py
 ```
 
 The app opens at `http://localhost:8501`.
+
+### Deployment verification (Day 10)
+
+A Streamlit Cloud URL is listed in the repository metadata:
+https://repay-master-kwuphbmhsmnzb9g5eeetvd.streamlit.app/. The URL resolves,
+but the Day-10 browser check presented Streamlit's platform authentication gate
+rather than the application, so the full public calculation workflow is
+**UNVERIFIED without viewer access**. The local dashboard and calculation flow
+were exercised with Playwright; the FastAPI backend and model artifacts were
+also exercised in the CI Compose smoke run. No public backend URL is claimed.
 
 ### Enabling AI recommendations
 Create `.streamlit/secrets.toml` (gitignored) with:
@@ -88,13 +139,19 @@ Repay-Master/
         └── tests/
 ```
 
+**Diagram:** [verified architecture SVG](docs/architecture.svg) · **Screenshots:**
+[initial dashboard](docs/screenshots/repaymaster-local-dashboard.png) ·
+[calculation results](docs/screenshots/repaymaster-calculation-results.png) ·
+[live deployment auth gate](docs/screenshots/repaymaster-live-auth-gate.png)
+
 ## Backend API
 
 A FastAPI backend under `backend/` wraps the existing deterministic finance
 math (`utils/finance.py`) and the ML risk model (`utils/risk.py`) as
 independently callable, tested HTTP endpoints, so this logic is no longer only
-reachable from inside the Streamlit process. It is implemented, tested (54
-pytest cases) and — since Day 6 — verified running inside its own container.
+reachable from inside the Streamlit process. It is implemented, tested (140
+parameterized pytest cases in the current source tree) and — since Day 6 —
+verified running inside its own container.
 
 **Currently implemented and tested:**
 - `POST /loan/calculate` — EMI/repayment-option calculation (Short/Recommended/Long term)
@@ -248,10 +305,11 @@ with `scale api=2` would break that limiter's guarantees, which is the
 condition under which Redis would finally be justified.
 
 **CI (GitHub Actions, `.github/workflows/ci.yml`):** lint (ruff, pinned) + a
-**blocking** dependency vulnerability scan (pip-audit) + the 91-case test suite,
-plus a job that builds the Docker image, a `config-validation` job (compose
-validation + image-availability + cross-file consistency), and the
-`compose-smoke-test` job described above.
+**blocking** dependency vulnerability scan (pip-audit) + the current
+parameterized test suite (140 cases after the Day-8 finance regression test),
+plus a Streamlit dependency/startup smoke job, a job that builds the Docker
+image, a `config-validation` job (compose validation + image-availability +
+cross-file consistency), and the `compose-smoke-test` job described above.
 
 ### Security posture (Day-7 remediation)
 
@@ -317,6 +375,105 @@ Three changes, made together because each one alone would have been misleading:
   analytics
 - Airflow DAG for scheduled batch risk scoring
 
-The Streamlit app (`app.py`) is unchanged and still works standalone; it does
+The Streamlit app (`app.py`) still works standalone and now shares the
+Decimal-hardened finance core described above; it does not yet call this API
+internally.
 
-not yet call this API internally.
+## Loan servicing, payments and ledger API (backend)
+
+Money is stored and computed as integer paise and returned as two-decimal strings.
+Posted journal entries are never edited; corrections are reversing entries.
+
+**Setup**
+```bash
+cd backend
+pip install -r requirements.txt
+export SECRET_KEY=$(python -c "import secrets;print(secrets.token_urlsafe(48))")
+export PAYMENT_WEBHOOK_SECRET=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
+alembic upgrade head            # creates the ledger/payments schema (SQLite or PostgreSQL)
+uvicorn app.main:app --reload
+```
+
+**Servicing simulator** (`utils/servicing.py`)
+- `POST /loan/servicing/simulate`: rate changes, payment holidays, restructuring,
+  extra and partial payments, late fees, processing fee.
+- `POST /loan/servicing/foreclosure-quote`: payoff amount before a given installment.
+- `POST /loan/servicing/compare`: baseline versus named what-if scenarios.
+
+**Payments and ledger**
+- `POST /loans` and `GET /loans/{id}`: loan accounts (owner-scoped).
+- `POST /loans/{id}/payments`: payment intent, idempotent on `idempotency_key`.
+- `POST /payments/{reference}/retry`: retry a failed payment.
+- `GET /loans/{id}/statement?from=YYYY-MM-DD&to=YYYY-MM-DD`: the owner's statement. Opening and closing
+  amount owed, each repayment and reversal with its split and date, and overpayment credit. The entries
+  come from the journal, and with no end date the response confirms the closing balance equals the loan's
+  current balance (`reconciles_with_loan_balance`).
+- `GET /ops/delinquency?as_of=YYYY-MM-DD` (ops): arrears aging. Buckets are current, 1-30, 31-60, 61-90,
+  90+ days past due, and unscheduled (a balance with no due date, never counted as current). The response
+  also lists each overdue loan with its days past due.
+- `PUT /ops/loans/{id}/due-date` (ops): set the installment due date. The change is audited. Loans also
+  accept an optional `due_date` at creation, and each loan view shows `days_past_due` and `delinquency_bucket`.
+- `POST /webhooks/payments`: signed webhook. Header `X-Webhook-Signature: t=<unix>,v1=<hmac>`,
+  where the HMAC is SHA-256 over `"<t>." + raw body`, keyed with `PAYMENT_WEBHOOK_SECRET`.
+  Timestamps older than 300 seconds are rejected. Events are deduplicated by `id`.
+- `POST /reconciliation/run` and `GET /ledger/trial-balance`: operations only (role `ops`, see below).
+
+**Guarantees, each covered by tests**
+- Every journal entry balances (debits equal credits), and the trial balance is zero.
+- Redelivered webhooks and retried intents never move money twice.
+- Overpayments are accepted, not refused. The waterfall takes fees, then interest, then principal, up to
+  what is owed. The excess is kept for the customer (`customer_credit`, shown on the payment as
+  `overpayment_credit`). Reversing the payment returns both the loan balances and the credit.
+- A receipt that cannot be applied at all (for example, a success for a failed payment) is parked in suspense.
+- Reversals restore loan balances and net the clearing account to zero.
+- Reconciliation reports missing settlements, unposted receipts, amount mismatches,
+  duplicate settlement rows, and reversals not reflected on either side.
+
+**Webhook processing and the worker**
+- `POST /webhooks/payments` verifies the signature, stores the event in an inbox, and
+  returns `202`. It does not apply money.
+- `python -m app.worker` (or `POST /ops/webhooks/drain`, operations only) processes the
+  inbox. Transient failures retry with exponential backoff (up to 5 attempts). Malformed
+  or permanently failing events go to `DEAD` and stay visible at `GET /ops/webhooks?status_filter=dead`.
+  After a human has fixed the cause, `POST /ops/webhooks/{event_id}/requeue` (admin) puts a dead event back.
+- Many workers can run at once. On PostgreSQL, `SKIP LOCKED` and row locks keep each event
+  applied exactly once. A test runs concurrent workers to check this.
+
+**Operations and roles**
+- Roles are stored in the database (`role_grants`) and checked on every request, so a revoke
+  takes effect on the next call. The token does not carry roles.
+  - `ops`: drain the inbox, read the inbox, run reconciliation, read the trial balance and integrity report.
+  - `admin`: everything `ops` can do, plus requeue dead events and grant or revoke roles. `admin` implies `ops`.
+  - Customers hold no role and can reach only the loans they own.
+- Bootstrap the first admin from a shell inside the API container (or with `DATABASE_URL` set):
+  `python -m app.cli grant-role <username> admin`. Revoke with `python -m app.cli revoke-role <username> <role>`.
+  Later grants can be made over the API with `POST /admin/roles` (admin only).
+- `POST /reconciliation/run` stores a reconciliation report; `GET /reconciliation/runs/{id}` reads it back.
+- `GET /ledger/integrity` checks that the books agree with the payments and loans they describe:
+  - every journal entry balances, and the trial balance is zero;
+  - each payment's entries match its status, and a reversal nets the original to zero;
+  - for each successful payment, the amount posted to each account (clearing, principal, interest,
+    fee, customer credit) equals what the payment applied;
+  - for each loan, principal, interest and fees reconcile: original minus applied equals the balance.
+- `GET /ledger/trial-balance` shows account balances.
+- `GET /admin/audit` (admin): the audit trail. Role grants and revokes, and webhook requeues, are
+  recorded with the actor, the target and the time, in the same transaction as the change.
+  The CLI records as actor `cli`.
+
+**Deployment (docker compose)**
+- Services: `postgres` (17), `migrate` (runs `alembic upgrade head` once and exits), `api`, and `worker`
+  (`python -m app.worker`). `api` and `worker` start only after migrations succeed.
+- Required in `.env`: `SECRET_KEY`, `POSTGRES_PASSWORD`. Set `PAYMENT_WEBHOOK_SECRET` to accept webhooks.
+  Use a URL-safe password: it is embedded in `DATABASE_URL`.
+- Scale workers with `docker compose up -d --scale worker=3`. Row locks keep each event applied once on PostgreSQL.
+- Users and saved scenarios stay in sqlite under the `repaymaster_data` volume.
+
+**Testing**
+- `pytest app/tests/` runs on SQLite by default.
+- `TEST_DATABASE_URL=postgresql+psycopg://user:pass@host/db pytest app/tests/` runs the same
+  suite on PostgreSQL, including the concurrency test. CI runs this on a PostgreSQL 16
+  service container, along with a migration round trip.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the commit message convention and the checks to run before pushing.

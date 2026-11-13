@@ -1,12 +1,13 @@
 # Repay-Master — Resume & LinkedIn Bullet Points
 
 *Added Day 7, in the same format as the sibling DevTrack's notes, and updated
-the same day after the security remediation. Numbers are measured: 75 from the
-CI `test` job; model figures from `models/metrics.json`, cross-checked against
+the same day after the security remediation and updated after the Day-8
+finance hardening. Numbers are measured: 140 parameterized cases in the current
+backend suite; model figures from `models/metrics.json`, cross-checked against
 `train_model.py`; container behaviour from the Day-6 `compose-smoke-test` run;
-dependency-audit status from a local `pip-audit` of the exact pinned set (and
-from the CI step that now gates on it). Anything not verified is listed as such
-at the bottom rather than left to be assumed.*
+dependency-audit status from local `pip-audit` runs of the exact pinned sets
+(and from the CI step that now gates on it). Anything not verified is listed as
+such at the bottom rather than left to be assumed.*
 
 ## Resume bullet points (pick 2-3 based on space)
 
@@ -14,7 +15,9 @@ at the bottom rather than left to be assumed.*
   a scikit-learn `RandomForestClassifier` (200 trees) that classifies
   repayment risk as Low/Medium/High and explains each prediction with
   per-feature SHAP contributions, plus deterministic amortization and
-  prepayment simulation. 75 pytest cases in CI.
+  prepayment simulation, with Decimal-backed amortization and an independent
+closed-form reference check. 140 parameterized pytest cases in the current CI
+suite.
 
 - Trained the model from scratch (`train_model.py`): derived risk labels from
   the same DTI/burden thresholds the app's own scoring uses, standardized
@@ -45,13 +48,13 @@ asserted in CI.
 
 | Claim | Value | Source |
 |---|---|---|
-| pytest cases | 91 | CI `test` job log (54 before the Day-7 CORS and key-strength tests) |
+| pytest cases | 140 | Current `backend/app/tests/` collection after the Day-8 finance regression test; parameterization expands 89 test functions to 140 cases |
 | Model | RandomForestClassifier, 200 trees, `random_state=42` | `train_model.py:66` |
 | Test accuracy | 80.0% on 40 held-out rows | `models/metrics.json` + asserted by smoke test |
 | Training rows | 200 (201 lines incl. header) | CSV + `n_rows: 200` |
 | Features | 5, standardized | `utils/risk.py` FEATURE_NAMES + StandardScaler |
 | Password hashing | PBKDF2-HMAC-SHA256, 100k iterations, per-user salt | `utils/auth.py:39` |
-| Coverage (production code) | 98% | CI `--cov=app` with `.coveragerc` omitting `app/tests/`; 347 stmts, 8 missed (97% before the Day-7 CORS and config modules) |
+| Coverage (production code) | 98% | CI `--cov=app` with `.coveragerc` omitting `app/tests/`; 347 backend statements, 7 missed in the current local run (the finance module is shared outside `app/` and is covered by dedicated tests/reference validation) |
 | Dependency audit | clean, and blocking | CI `pip-audit --desc` — no `\|\| true`, no `continue-on-error`, no waivers: `No known vulnerabilities found` |
 | Interpreter parity | CI == image == Python 3.12 | `check_config_consistency.py` fails `config-validation` if `ci.yml` and a Dockerfile disagree on Python; added after a sibling repo's pin was chosen against the wrong interpreter. Mutation-tested (exit 1 on mismatch) |
 | Signing-key floor | 32 bytes in production | `app/core/config.py` model validator; warns outside production so a dev key cannot stop a service |
@@ -116,8 +119,11 @@ asserted in CI.
   user through the HTTP API and then logs in through the same `utils/auth.py`
   the Streamlit app uses — but nothing renders the UI. The Docker image serves
   only the FastAPI backend.
-- **Coverage is 98% on production code** (347 statements, 8 missed). Read it
-  with the caveat that this backend is small and mostly deterministic maths plus
+- **Coverage is 98% on backend production code** (347 statements, 7 missed in
+  the current run). The shared finance module is outside `app/`, so its
+  correctness evidence comes from the dedicated edge-case suite and the
+  independent Decimal reference script rather than this backend-only number.
+  Read it with the caveat that this backend is small and mostly deterministic maths plus
   thin routes — a high percentage here is cheaper to earn than in the sibling
   CertiFake, whose 78% covers Kafka consumers and CV code. Do not present the
   two as comparable.
