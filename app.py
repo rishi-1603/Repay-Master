@@ -1,20 +1,34 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import google.generativeai as genai
-
-from utils.auth import authenticate, register_user, save_scenario, get_saved_scenarios, delete_scenario
-from utils.currency import get_usd_inr_rate, symbol, format_amount
-from utils.finance import (
-    calculate_monthly_payment, suggest_repayment_period, calculate_affordability,
-    calculate_achievements, build_amortization_schedule, simulate_prepayment,
+from google import genai
+from utils.auth import (
+    authenticate,
+    delete_scenario,
+    get_saved_scenarios,
+    register_user,
+    save_scenario,
 )
-from utils.risk import load_risk_model, load_model_metrics, predict_risk, explain_prediction
+from utils.currency import format_amount, get_usd_inr_rate, symbol
+from utils.finance import (
+    build_amortization_schedule,
+    calculate_achievements,
+    calculate_affordability,
+    calculate_monthly_payment,
+    simulate_prepayment,
+    suggest_repayment_period,
+)
 from utils.pdf_report import build_report_pdf
+from utils.risk import (
+    explain_prediction,
+    load_model_metrics,
+    load_risk_model,
+    predict_risk,
+)
 
 LIGHT_BLUE = "#7EC8F5"
 DARK_BLUE = "#1f4e8c"
@@ -104,7 +118,7 @@ with col1:
     loan_amount = st.number_input(f"Loan Amount ({cur_sym})", min_value=loan_min, max_value=loan_max,
                                    value=loan_default, step=loan_step)
     interest_rate = st.slider("Interest Rate (%)", min_value=1.0, max_value=20.0, value=8.0, step=0.1)
-    start_date = st.date_input("Start Date", datetime.now())
+    start_date = st.date_input("Start Date", datetime.now(timezone.utc).date())
 
 with col2:
     st.subheader("Financial Information")
@@ -168,7 +182,7 @@ if st.session_state.get("results_ready"):
         name="Monthly EMI",
     ))
     fig.update_layout(template="plotly_dark", yaxis_title=f"Amount ({cur_sym})", showlegend=True)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # ------------------------------------------------------------------
     # 2. Breakdown + Cash flow
@@ -183,7 +197,7 @@ if st.session_state.get("results_ready"):
             marker_colors=[LIGHT_BLUE, DARK_BLUE],
         ))
         fig_pie.update_layout(template="plotly_dark")
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.plotly_chart(fig_pie, width="stretch")
     with chart_col2:
         st.markdown("**Monthly Cash Flow Analysis**")
         cash_flow_data = pd.DataFrame({
@@ -195,7 +209,7 @@ if st.session_state.get("results_ready"):
         })
         fig_bar = px.bar(cash_flow_data, x='Category', y='Amount', template="plotly_dark",
                           color_discrete_sequence=[LIGHT_BLUE])
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, width="stretch")
 
     # ------------------------------------------------------------------
     # 3. ML Risk Assessment
@@ -223,7 +237,7 @@ if st.session_state.get("results_ready"):
     classes = [c for c in order if c in proba_dict] + [c for c in proba_dict if c not in order]
     fig_conf = go.Figure(go.Bar(x=classes, y=[proba_dict[c] for c in classes], marker_color=LIGHT_BLUE))
     fig_conf.update_layout(template="plotly_dark", yaxis_title="Probability", xaxis_title="Risk Level")
-    st.plotly_chart(fig_conf, use_container_width=True)
+    st.plotly_chart(fig_conf, width="stretch")
 
     with st.expander("Why did the model predict this? (SHAP explanation)"):
         explain_df = explain_prediction(risk_model, risk_scaler, features)
@@ -231,7 +245,7 @@ if st.session_state.get("results_ready"):
             st.caption("(Approximate — SHAP unavailable, showing global feature importance instead.)")
         fig_shap = px.bar(explain_df, x="contribution", y="feature", orientation="h",
                            template="plotly_dark", color_discrete_sequence=[LIGHT_BLUE])
-        st.plotly_chart(fig_shap, use_container_width=True)
+        st.plotly_chart(fig_shap, width="stretch")
 
     # ------------------------------------------------------------------
     # 4. Financial Health Analysis
@@ -261,16 +275,16 @@ if st.session_state.get("results_ready"):
             achievements = calculate_achievements(loan_amount, data['monthly_payment'], interest_rate, data['months'])
 
             fig_ach = go.Figure()
-            months_range = list(range(0, data['months'] + 1))
+            months_range = list(range(data['months'] + 1))
             progress = [min(100 * i * data['monthly_payment'] / loan_amount, 100) for i in months_range]
             fig_ach.add_trace(go.Scatter(x=months_range, y=progress, mode='lines',
-                                          line=dict(color='rgba(126,200,245,0.4)'), name='Loan Progress'))
+                                          line={'color': 'rgba(126,200,245,0.4)'}, name='Loan Progress'))
             fig_ach.add_trace(go.Scatter(
                 x=[a['month'] for a in achievements],
                 y=[a['percentage'] for a in achievements],
                 mode='markers+text',
-                marker=dict(size=16, symbol='star',
-                            color=['gold' if a['type'] == 'amount' else 'silver' for a in achievements]),
+                marker={'size': 16, 'symbol': 'star',
+                            'color': ['gold' if a['type'] == 'amount' else 'silver' for a in achievements]},
                 text=[a['title'].split()[0] for a in achievements],
                 textposition='top center',
                 name='Achievements',
@@ -278,7 +292,7 @@ if st.session_state.get("results_ready"):
             fig_ach.update_layout(template="plotly_dark", title=f"Achievement Timeline — {term_name} Term",
                                    xaxis_title="Months", yaxis_title="Loan Progress (%)",
                                    yaxis_range=[0, 105], showlegend=True)
-            st.plotly_chart(fig_ach, use_container_width=True)
+            st.plotly_chart(fig_ach, width="stretch")
 
             with st.expander("View Detailed Achievements"):
                 for a in achievements:
@@ -305,7 +319,7 @@ if st.session_state.get("results_ready"):
     schedule_term = st.selectbox("Show schedule for term:", list(options.keys()), index=1)
     sched_data = options[schedule_term]
     schedule_df, _, _ = build_amortization_schedule(loan_amount, interest_rate, sched_data['months'], start_date)
-    st.dataframe(schedule_df, use_container_width=True, height=280)
+    st.dataframe(schedule_df, width="stretch", height=280)
     st.download_button("📥 Download Amortization Schedule (CSV)",
                         schedule_df.to_csv(index=False).encode('utf-8'),
                         file_name=f"amortization_{schedule_term.lower()}.csv", mime="text/csv")
@@ -455,8 +469,8 @@ if st.session_state.get("results_ready"):
         comp_df = pd.DataFrame(comp_rows)
         fig_comp = px.bar(comp_df, x="Offer", y="Total Cost", template="plotly_dark",
                            color_discrete_sequence=[LIGHT_BLUE])
-        st.plotly_chart(fig_comp, use_container_width=True)
-        st.dataframe(comp_df, use_container_width=True)
+        st.plotly_chart(fig_comp, width="stretch")
+        st.dataframe(comp_df, width="stretch")
 
     # ------------------------------------------------------------------
     # 13. AI-Powered Recommendations (Gemini)
@@ -467,7 +481,7 @@ if st.session_state.get("results_ready"):
 
     try:
         api_key = st.secrets.get("GEMINI_API_KEY")
-    except Exception:
+    except Exception:  # noqa: BLE001 - Streamlit secrets are optional and may be unavailable
         api_key = None
     api_key = api_key or os.environ.get("GEMINI_API_KEY")
 
@@ -478,8 +492,7 @@ if st.session_state.get("results_ready"):
         if st.button("Get AI Recommendation"):
             with st.spinner("Thinking..."):
                 try:
-                    genai.configure(api_key=api_key)
-                    model = genai.GenerativeModel("gemini-2.5-flash")
+                    client = genai.Client(api_key=api_key)
                     prompt = f"""
 A user has a loan of {loan_amount:,.0f} {currency} at {interest_rate:.1f}% annual interest,
 with a monthly income of {monthly_income:,.0f} {currency} and monthly expenses of
@@ -496,7 +509,10 @@ Write a structured markdown response with these sections, using headings:
 4. "Conclusion" — a short closing paragraph.
 Keep it concise and actionable.
 """
-                    response = model.generate_content(prompt)
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=prompt,
+                    )
                     st.markdown(response.text)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - optional external Gemini service
                     st.error(f"Error generating response: {e}")
