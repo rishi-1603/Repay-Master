@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     # failure instead. See backend/app/tests/conftest.py for how tests
     # supply one, and .env.example / docker-compose.yml for how a real
     # deployment must.
+    # PostgreSQL URL for the loan ledger. The password comes from PGPASSWORD or the URL in a secret store.
+    DATABASE_URL: str = "postgresql+psycopg://rm@127.0.0.1:5432/repaymaster"
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
