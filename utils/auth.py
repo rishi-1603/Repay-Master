@@ -13,9 +13,15 @@ from datetime import datetime
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "app.db")
 
 
-def _connect():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+# Paths whose schema this process has already created. The point is the per-call
+# cost: `_connect()` is called once per request, and the two CREATE TABLE statements
+# plus the index cost ~56 microseconds every time (~0.076 ms vs ~0.020 ms for a bare
+# connect, Day 7 measurement) for a schema that cannot have changed in between.
+_SCHEMA_ENSURED: set[str] = set()
+
+
+def _ensure_schema(conn):
+    """Create the tables and indexes if they are missing. Idempotent by design."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -32,6 +38,21 @@ def _connect():
             created_at TEXT NOT NULL
         )
     """)
+    # Every history read is "WHERE username = ? ORDER BY id DESC" -- without this the
+    # plan is a full scan of saved_scenarios (measured on 20k rows Day 7).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_saved_scenarios_username "
+                 "ON saved_scenarios (username)")
+
+
+def _connect():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    # checked BEFORE connecting: sqlite3.connect() creates the file, after which
+    # "is this a new database?" is no longer answerable
+    is_new_file = not os.path.exists(DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
+    if is_new_file or DB_PATH not in _SCHEMA_ENSURED:
+        _ensure_schema(conn)
+        _SCHEMA_ENSURED.add(DB_PATH)
     return conn
 
 
@@ -100,6 +121,30 @@ def get_saved_scenarios(username):
             {'id': r[0], 'label': r[1], 'params': json.loads(r[2]), 'created_at': r[3]}
             for r in rows
         ]
+    finally:
+        conn.close()
+
+
+def get_scenario(scenario_id, username):
+    """One saved scenario by id, scoped to its owner.
+
+    Added on Day 7 because the FastAPI `POST /history` handler used to call
+    `get_saved_scenarios(username)` and then scan the returned list for the row it
+    had just inserted -- i.e. it read and JSON-parsed every scenario the user owned
+    (54 ms for 20,000 rows) to answer a query about one row. The `AND username = ?`
+    keeps ownership enforcement at the SQL layer, exactly like `delete_scenario`.
+    Returns None when the row does not exist or belongs to someone else.
+    """
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT id, label, params_json, created_at FROM saved_scenarios "
+            "WHERE id = ? AND username = ?",
+            (scenario_id, username),
+        ).fetchone()
+        if row is None:
+            return None
+        return {'id': row[0], 'label': row[1], 'params': json.loads(row[2]), 'created_at': row[3]}
     finally:
         conn.close()
 
